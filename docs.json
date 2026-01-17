@@ -151,12 +151,7 @@
         "label": "Hyperliquid",
         "href": "https://hyperliquid.xyz"
       }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Get Started",
-      "href": "/quickstart"
-    }
+    ]
   },
   "contextual": {
     "options": [
