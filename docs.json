@@ -8,7 +8,8 @@
     "dark": "#0EA5E9"
   },
   "appearance": {
-    "default": "dark"
+    "default": "dark",
+    "strict": true
   },
   "favicon": "/images/web-app-manifest-512x512.png",
   "navigation": {
@@ -144,7 +145,7 @@
       ]
     }
   },
-  "logo": "/images/mina-sdk-logo.png",
+  "logo": "/images/mina-sdk-logo-dark.png",
   "navbar": {
     "links": [
       {
