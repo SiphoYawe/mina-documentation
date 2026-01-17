@@ -1,0 +1,586 @@
+---
+title: 'Quote Service'
+description: 'Bridge quote fetching and price impact calculation'
+---
+
+The Quote Service provides functions for fetching bridge quotes from the LI.FI API, calculating price impact, and managing quote caching.
+
+## Exports
+
+```typescript
+import {
+  getQuote,
+  getQuotes,
+  estimatePriceImpact,
+  invalidateQuoteCache,
+  createQuoteCache,
+  QuoteCache,
+  QuoteFetchError,
+  InvalidQuoteParamsError,
+  NoRouteFoundError,
+  isQuoteFetchError,
+  isInvalidQuoteParamsError,
+  isNoRouteFoundError,
+} from '@mina-bridge/sdk/services/quote';
+```
+
+---
+
+## Functions
+
+### getQuote(params, integrator, autoDeposit?, cache?, timeoutMs?)
+
+Get a single optimal bridge quote.
+
+```typescript
+async function getQuote(
+  params: QuoteParams,
+  integrator: string,
+  autoDeposit?: boolean,
+  cache?: QuoteCache,
+  timeoutMs?: number
+): Promise<Quote>
+```
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `params` | `QuoteParams` | Yes | - | Quote parameters |
+| `integrator` | `string` | Yes | - | Integrator identifier |
+| `autoDeposit` | `boolean` | No | `true` | Include auto-deposit step |
+| `cache` | `QuoteCache` | No | - | Optional cache instance |
+| `timeoutMs` | `number` | No | `30000` | Request timeout in ms |
+
+**QuoteParams:**
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `fromChainId` | `number` | Yes | - | Source chain ID |
+| `toChainId` | `number` | No | `999` | Destination chain ID (HyperEVM) |
+| `fromToken` | `string` | Yes | - | Source token address |
+| `toToken` | `string` | Yes | - | Destination token address |
+| `fromAmount` | `string` | Yes | - | Amount in smallest unit |
+| `fromAddress` | `string` | Yes | - | User's wallet address |
+| `toAddress` | `string` | No | `fromAddress` | Destination address |
+| `slippageTolerance` | `number` | No | `0.5` | Slippage as percentage (0.5 = 0.5%) |
+| `routePreference` | `RoutePreference` | No | `'recommended'` | Route priority |
+
+**Returns:** `Quote`
+
+**Throws:**
+- `InvalidQuoteParamsError` if parameters are invalid
+- `NoRouteFoundError` if no route is available
+- `QuoteFetchError` if API request fails
+
+**Example:**
+
+```typescript
+const quote = await getQuote(
+  {
+    fromChainId: 1,
+    toChainId: 999,
+    fromToken: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', // USDC
+    toToken: '0xb88339cb7199b77e23db6e890353e22632ba630f',   // HyperEVM USDC
+    fromAmount: '1000000000', // 1000 USDC (6 decimals)
+    fromAddress: '0x...',
+    slippageTolerance: 0.5, // 0.5%
+    routePreference: 'recommended',
+  },
+  'my-app'
+);
+
+console.log('Quote Details:');
+console.log(`  ID: ${quote.id}`);
+console.log(`  Input: ${quote.fromAmount}`);
+console.log(`  Output: ${quote.toAmount}`);
+console.log(`  Min Received: ${quote.minimumReceivedFormatted}`);
+console.log(`  Time: ${quote.estimatedTime}s`);
+console.log(`  Fees: $${quote.fees.totalUsd}`);
+console.log(`  Price Impact: ${(quote.priceImpact * 100).toFixed(2)}%`);
+console.log(`  High Impact: ${quote.highImpact}`);
+console.log(`  Expires: ${new Date(quote.expiresAt).toISOString()}`);
+```
+
+---
+
+### getQuotes(params, integrator, autoDeposit?, cache?, timeoutMs?)
+
+Get multiple bridge quotes for comparison.
+
+```typescript
+async function getQuotes(
+  params: QuoteParams,
+  integrator: string,
+  autoDeposit?: boolean,
+  cache?: QuoteCache,
+  timeoutMs?: number
+): Promise<QuotesResponse>
+```
+
+**Returns:** `QuotesResponse`
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `quotes` | `Quote[]` | Array of quotes (up to 5) |
+| `recommendedIndex` | `number` | Index of recommended quote |
+
+**Example:**
+
+```typescript
+const { quotes, recommendedIndex } = await getQuotes(
+  {
+    fromChainId: 42161, // Arbitrum
+    toChainId: 999,
+    fromToken: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831', // USDC
+    toToken: '0xb88339cb7199b77e23db6e890353e22632ba630f',
+    fromAmount: '500000000', // 500 USDC
+    fromAddress: '0x...',
+  },
+  'my-app'
+);
+
+console.log(`Found ${quotes.length} routes`);
+console.log(`Recommended: Route ${recommendedIndex + 1}`);
+
+// Display all routes
+quotes.forEach((quote, i) => {
+  const isRecommended = i === recommendedIndex;
+  console.log(`\nRoute ${i + 1}${isRecommended ? ' (Recommended)' : ''}:`);
+  console.log(`  Bridge: ${quote.steps[0]?.tool}`);
+  console.log(`  Time: ${quote.estimatedTime}s`);
+  console.log(`  Output: ${quote.toAmount}`);
+  console.log(`  Fees: $${quote.fees.totalUsd.toFixed(2)}`);
+});
+```
+
+---
+
+### estimatePriceImpact(fromToken, toToken, fromAmount, toAmount)
+
+Calculate price impact for a swap or bridge.
+
+```typescript
+function estimatePriceImpact(
+  fromToken: Token,
+  toToken: Token,
+  fromAmount: string,
+  toAmount: string
+): PriceImpactResult
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `fromToken` | `Token` | Source token with price |
+| `toToken` | `Token` | Destination token with price |
+| `fromAmount` | `string` | Input amount (smallest unit) |
+| `toAmount` | `string` | Output amount (smallest unit) |
+
+**Returns:** `PriceImpactResult`
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `priceImpact` | `number` | Price impact as decimal (0.01 = 1%) |
+| `impactPercentage` | `string` | Formatted percentage string |
+| `severity` | `'low' \| 'medium' \| 'high' \| 'very_high'` | Severity level |
+| `highImpact` | `boolean` | Whether impact exceeds 1% threshold |
+
+**Severity Thresholds:**
+
+| Severity | Impact |
+|----------|--------|
+| `low` | < 0.5% |
+| `medium` | 0.5% - 1% |
+| `high` | 1% - 3% |
+| `very_high` | > 3% |
+
+**Example:**
+
+```typescript
+const impact = estimatePriceImpact(
+  { ...usdcToken, priceUsd: 1.0 },
+  { ...hyperliquidUsdc, priceUsd: 1.0 },
+  '1000000000', // 1000 USDC
+  '997000000'   // 997 USDC (0.3% impact)
+);
+
+console.log(`Price Impact: ${impact.impactPercentage}`); // "0.30%"
+console.log(`Severity: ${impact.severity}`); // "low"
+console.log(`High Impact: ${impact.highImpact}`); // false
+
+if (impact.severity === 'high' || impact.severity === 'very_high') {
+  console.warn('Consider using a smaller amount');
+}
+```
+
+---
+
+### invalidateQuoteCache(cache?)
+
+Manually invalidate the quote cache.
+
+```typescript
+function invalidateQuoteCache(cache?: QuoteCache): void
+```
+
+**Example:**
+
+```typescript
+// Invalidate default cache
+invalidateQuoteCache();
+
+// Invalidate specific cache
+const myCache = createQuoteCache();
+invalidateQuoteCache(myCache);
+```
+
+---
+
+### createQuoteCache()
+
+Factory function to create a new cache instance.
+
+```typescript
+function createQuoteCache(): QuoteCache
+```
+
+**Example:**
+
+```typescript
+const cache = createQuoteCache();
+const quote = await getQuote(params, 'my-app', true, cache);
+```
+
+---
+
+## Error Types
+
+### QuoteFetchError
+
+Thrown when quote fetching fails.
+
+```typescript
+class QuoteFetchError extends MinaError {
+  readonly code: 'QUOTE_FETCH_FAILED';
+  readonly recoverable: true;
+  readonly recoveryAction: 'retry';
+  readonly statusCode?: number;
+  readonly endpoint: string;
+}
+```
+
+**Example:**
+
+```typescript
+try {
+  const quote = await getQuote(params, 'my-app');
+} catch (error) {
+  if (isQuoteFetchError(error)) {
+    console.error(`API Error (${error.statusCode}): ${error.message}`);
+    console.log('Retry recommended');
+  }
+}
+```
+
+### InvalidQuoteParamsError
+
+Thrown when quote parameters are invalid.
+
+```typescript
+class InvalidQuoteParamsError extends MinaError {
+  readonly code: 'INVALID_QUOTE_PARAMS';
+  readonly recoverable: false;
+  readonly field: string;
+  readonly reason: string;
+}
+```
+
+**Example:**
+
+```typescript
+try {
+  const quote = await getQuote({
+    fromChainId: -1, // Invalid
+    ...
+  }, 'my-app');
+} catch (error) {
+  if (isInvalidQuoteParamsError(error)) {
+    console.error(`Invalid ${error.field}: ${error.reason}`);
+  }
+}
+```
+
+### NoRouteFoundError
+
+Thrown when no bridge route is available.
+
+```typescript
+class NoRouteFoundError extends MinaError {
+  readonly code: 'NO_ROUTE_FOUND';
+  readonly recoverable: true;
+  readonly recoveryAction: 'try_different_route';
+  readonly fromChainId: number;
+  readonly toChainId: number;
+  readonly fromToken: string;
+  readonly toToken: string;
+}
+```
+
+**Example:**
+
+```typescript
+try {
+  const quote = await getQuote(params, 'my-app');
+} catch (error) {
+  if (isNoRouteFoundError(error)) {
+    console.error(
+      `No route from chain ${error.fromChainId} to ${error.toChainId}`
+    );
+    console.log('Try a different token or chain');
+  }
+}
+```
+
+---
+
+## QuoteCache Class
+
+The `QuoteCache` class manages caching for quote data with a **30-second TTL**.
+
+### Methods
+
+```typescript
+class QuoteCache {
+  /** Get cached quote if not expired (30 second TTL) */
+  getQuote(params: QuoteParams): {
+    data: Quote;
+    cachedAt: number;
+  } | null;
+
+  /** Store quote in cache */
+  setQuote(params: QuoteParams, quote: Quote): void;
+
+  /** Get cached quotes list */
+  getQuotes(params: QuoteParams): {
+    data: Quote[];
+    recommendedIndex: number;
+    cachedAt: number;
+  } | null;
+
+  /** Store quotes list in cache */
+  setQuotes(
+    params: QuoteParams,
+    quotes: Quote[],
+    recommendedIndex: number
+  ): void;
+
+  /** Invalidate all cached quotes */
+  invalidate(): void;
+
+  /** Check if any cached quotes exist */
+  hasCached(): boolean;
+}
+```
+
+### Example Usage
+
+```typescript
+const cache = createQuoteCache();
+
+// First request - fetches from API
+const quote1 = await getQuote(params, 'my-app', true, cache);
+console.log('Fresh quote from API');
+
+// Same request within 30 seconds - uses cache
+const quote2 = await getQuote(params, 'my-app', true, cache);
+console.log('Quote from cache (same ID):', quote1.id === quote2.id);
+
+// Different amount - fetches new quote
+const quote3 = await getQuote(
+  { ...params, fromAmount: '2000000000' },
+  'my-app',
+  true,
+  cache
+);
+console.log('New quote for different amount');
+
+// Force refresh
+cache.invalidate();
+const quote4 = await getQuote(params, 'my-app', true, cache);
+console.log('Fresh quote after invalidation');
+```
+
+---
+
+## Types
+
+### Quote
+
+```typescript
+interface Quote {
+  /** Unique quote ID */
+  id: string;
+  /** Route steps */
+  steps: Step[];
+  /** Fee breakdown */
+  fees: Fees;
+  /** Estimated total time in seconds */
+  estimatedTime: number;
+  /** Input amount */
+  fromAmount: string;
+  /** Expected output amount */
+  toAmount: string;
+  /** Slippage tolerance applied (percentage format) */
+  slippageTolerance: number;
+  /** Minimum amount to receive after slippage */
+  minimumReceived: string;
+  /** Minimum amount formatted with decimals */
+  minimumReceivedFormatted: string;
+  /** Price impact as decimal (0.01 = 1%) */
+  priceImpact: number;
+  /** Whether impact exceeds HIGH threshold (1%) */
+  highImpact: boolean;
+  /** Price impact severity level */
+  impactSeverity: 'low' | 'medium' | 'high' | 'very_high';
+  /** Quote expiration timestamp */
+  expiresAt: number;
+  /** Source token */
+  fromToken: Token;
+  /** Destination token */
+  toToken: Token;
+  /** Whether auto-deposit is included */
+  includesAutoDeposit: boolean;
+  /** Whether manual deposit is required */
+  manualDepositRequired: boolean;
+  /** Route preference used */
+  routePreference: RoutePreference;
+  /** Alternative routes for comparison */
+  alternativeRoutes?: RouteComparison[];
+}
+```
+
+### Step
+
+```typescript
+interface Step {
+  id: string;
+  type: 'swap' | 'bridge' | 'deposit' | 'approve';
+  tool: string;
+  toolLogoUrl?: string;
+  fromChainId: number;
+  toChainId: number;
+  fromToken: Token;
+  toToken: Token;
+  fromAmount: string;
+  toAmount: string;
+  estimatedTime: number;
+}
+```
+
+### Fees
+
+```typescript
+interface Fees {
+  totalUsd: number;
+  gasUsd: number;
+  bridgeFeeUsd: number;
+  protocolFeeUsd: number;
+  gasEstimate: GasEstimate;
+  gasFee?: FeeItem;
+  bridgeFee?: FeeItem;
+  protocolFee?: FeeItem;
+}
+```
+
+### RoutePreference
+
+```typescript
+type RoutePreference = 'recommended' | 'fastest' | 'cheapest';
+```
+
+### RouteComparison
+
+```typescript
+interface RouteComparison {
+  type: RoutePreference;
+  estimatedTime: number;
+  totalFees: string;
+  outputAmount: string;
+  routeId: string;
+}
+```
+
+---
+
+## Common Patterns
+
+### Compare Route Options
+
+```typescript
+async function compareRoutes(baseParams: QuoteParams) {
+  const preferences: RoutePreference[] = ['recommended', 'fastest', 'cheapest'];
+
+  const quotes = await Promise.all(
+    preferences.map(pref =>
+      getQuote({ ...baseParams, routePreference: pref }, 'my-app')
+    )
+  );
+
+  console.log('Route Comparison:');
+  quotes.forEach((quote, i) => {
+    console.log(`\n${preferences[i].toUpperCase()}:`);
+    console.log(`  Time: ${quote.estimatedTime}s`);
+    console.log(`  Fees: $${quote.fees.totalUsd.toFixed(2)}`);
+    console.log(`  Output: ${quote.toAmount}`);
+  });
+}
+```
+
+### Handle High Price Impact
+
+```typescript
+async function safeGetQuote(params: QuoteParams) {
+  const quote = await getQuote(params, 'my-app');
+
+  if (quote.highImpact) {
+    console.warn(`High price impact detected: ${quote.priceImpact * 100}%`);
+
+    if (quote.impactSeverity === 'very_high') {
+      throw new Error(
+        `Price impact too high (${quote.priceImpact * 100}%). ` +
+        'Consider using a smaller amount.'
+      );
+    }
+  }
+
+  return quote;
+}
+```
+
+### Auto-Refresh Quotes
+
+```typescript
+function useQuoteRefresh(params: QuoteParams, intervalMs = 25000) {
+  const cache = createQuoteCache();
+  let currentQuote: Quote | null = null;
+
+  const refresh = async () => {
+    try {
+      cache.invalidate(); // Force fresh quote
+      currentQuote = await getQuote(params, 'my-app', true, cache);
+      console.log('Quote refreshed:', currentQuote.id);
+    } catch (error) {
+      console.error('Failed to refresh quote:', error);
+    }
+  };
+
+  // Initial fetch
+  refresh();
+
+  // Set up refresh interval (before 30s expiry)
+  const interval = setInterval(refresh, intervalMs);
+
+  return {
+    getQuote: () => currentQuote,
+    stop: () => clearInterval(interval),
+  };
+}
+```

@@ -1,0 +1,276 @@
+---
+title: "Status Types"
+description: "TypeScript type definitions for execution and transaction status tracking"
+---
+
+# Status Types
+
+Types for tracking execution progress and transaction status.
+
+## StepStatusPayload
+
+Enhanced status payload for individual step callbacks.
+
+```typescript
+interface StepStatusPayload {
+  /** Step identifier */
+  stepId: string;
+  /** Type of step */
+  step: StepType;
+  /** Current status */
+  status: 'pending' | 'active' | 'completed' | 'failed';
+  /** Transaction hash (if submitted) */
+  txHash: string | null;
+  /** Error (if failed) */
+  error: Error | null;
+  /** Timestamp of last update */
+  timestamp: number;
+}
+```
+
+### Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `stepId` | `string` | Unique identifier for this step |
+| `step` | `StepType` | Type of operation: `'approval'`, `'swap'`, `'bridge'`, or `'deposit'` |
+| `status` | `string` | Current status of the step |
+| `txHash` | `string \| null` | Transaction hash once submitted, `null` before submission |
+| `error` | `Error \| null` | Error object if step failed, `null` otherwise |
+| `timestamp` | `number` | Unix timestamp of the last status update |
+
+### Step Status Values
+
+| Status | Description |
+|--------|-------------|
+| `'pending'` | Step has not started yet |
+| `'active'` | Step is currently executing (also shown as `'in_progress'`) |
+| `'completed'` | Step finished successfully |
+| `'failed'` | Step encountered an error |
+
+### Example
+
+```typescript
+const result = await mina.execute({
+  quote,
+  signer,
+  onStepChange: (payload: StepStatusPayload) => {
+    console.log(`Step ${payload.stepId}: ${payload.status}`);
+
+    if (payload.status === 'active') {
+      console.log('Transaction submitted:', payload.txHash);
+    }
+
+    if (payload.status === 'failed') {
+      console.error('Step failed:', payload.error?.message);
+    }
+  },
+});
+```
+
+---
+
+## TransactionStatusPayload
+
+Status payload for overall transaction progress tracking.
+
+```typescript
+interface TransactionStatusPayload {
+  /** Overall status */
+  status: 'pending' | 'in_progress' | 'completed' | 'failed';
+  /** Substatus for detailed state */
+  substatus: string;
+  /** Current step index (1-based for UI display) */
+  currentStep: number;
+  /** Total number of steps */
+  totalSteps: number;
+  /** Input amount */
+  fromAmount: string;
+  /** Output amount (or expected) */
+  toAmount: string | null;
+  /** Bridge transaction hash */
+  txHash: string;
+  /** Receiving transaction hash on destination chain */
+  receivingTxHash: string | null;
+  /** Progress percentage (0-100) */
+  progress: number;
+  /** Estimated time remaining in seconds */
+  estimatedTime: number;
+}
+```
+
+### Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `status` | `string` | Overall execution status |
+| `substatus` | `string` | Detailed substatus message (e.g., "WAIT_SOURCE_CONFIRMATIONS") |
+| `currentStep` | `number` | Current step number (1-based for UI) |
+| `totalSteps` | `number` | Total number of steps in the execution |
+| `fromAmount` | `string` | Input amount being bridged |
+| `toAmount` | `string \| null` | Output amount (may be null until confirmed) |
+| `txHash` | `string` | Main bridge transaction hash |
+| `receivingTxHash` | `string \| null` | Transaction hash on destination chain |
+| `progress` | `number` | Progress percentage from 0 to 100 |
+| `estimatedTime` | `number` | Estimated seconds remaining |
+
+### Example
+
+```typescript
+const result = await mina.execute({
+  quote,
+  signer,
+  onStatusChange: (payload: TransactionStatusPayload) => {
+    // Update progress bar
+    setProgress(payload.progress);
+
+    // Show current step
+    setStatusText(`Step ${payload.currentStep} of ${payload.totalSteps}`);
+
+    // Display detailed status
+    console.log('Substatus:', payload.substatus);
+
+    if (payload.receivingTxHash) {
+      console.log('Receiving tx:', payload.receivingTxHash);
+    }
+  },
+});
+```
+
+---
+
+## ExecutionStatusType
+
+Enum-like type for overall execution status.
+
+```typescript
+type ExecutionStatusType =
+  | 'idle'
+  | 'approving'
+  | 'approved'
+  | 'executing'
+  | 'bridging'
+  | 'completed'
+  | 'failed';
+```
+
+### Status Flow
+
+```
+idle -> approving -> approved -> executing -> bridging -> completed
+                                    |            |
+                                    v            v
+                                 failed       failed
+```
+
+### Values
+
+| Value | Description |
+|-------|-------------|
+| `'idle'` | No execution in progress |
+| `'approving'` | Token approval transaction pending |
+| `'approved'` | Token approval confirmed |
+| `'executing'` | Main bridge transaction executing |
+| `'bridging'` | Cross-chain transfer in progress |
+| `'completed'` | Bridge completed successfully |
+| `'failed'` | Execution failed at some step |
+
+---
+
+## StepType
+
+Type of execution step.
+
+```typescript
+type StepType = 'approval' | 'swap' | 'bridge' | 'deposit';
+```
+
+### Values
+
+| Value | Description |
+|-------|-------------|
+| `'approval'` | ERC20 token approval for spending |
+| `'swap'` | Token swap on source or destination chain |
+| `'bridge'` | Cross-chain bridge transfer |
+| `'deposit'` | Deposit to Hyperliquid L1 trading account |
+
+---
+
+## StepStatus (Internal)
+
+Internal status tracking for individual steps.
+
+```typescript
+interface StepStatus {
+  /** Step ID */
+  stepId: string;
+  /** Step type */
+  stepType?: StepType;
+  /** Current status */
+  status: 'pending' | 'executing' | 'completed' | 'failed';
+  /** Transaction hash (if submitted) */
+  txHash?: string;
+  /** Error message (if failed) */
+  error?: string;
+  /** Timestamp of last update */
+  updatedAt: number;
+}
+```
+
+---
+
+## Callback Types
+
+Type definitions for status callbacks.
+
+```typescript
+/** Callback type for step changes */
+type OnStepChange = (stepStatus: StepStatusPayload) => void;
+
+/** Callback type for overall status changes */
+type OnStatusChange = (status: TransactionStatusPayload) => void;
+```
+
+### Example: Complete Status Handling
+
+```typescript
+import type {
+  OnStepChange,
+  OnStatusChange,
+  StepStatusPayload,
+  TransactionStatusPayload
+} from '@mina-bridge/sdk';
+
+const handleStepChange: OnStepChange = (step: StepStatusPayload) => {
+  switch (step.status) {
+    case 'pending':
+      console.log(`Waiting for ${step.step}...`);
+      break;
+    case 'active':
+      console.log(`${step.step} in progress: ${step.txHash}`);
+      break;
+    case 'completed':
+      console.log(`${step.step} completed`);
+      break;
+    case 'failed':
+      console.error(`${step.step} failed: ${step.error?.message}`);
+      break;
+  }
+};
+
+const handleStatusChange: OnStatusChange = (status: TransactionStatusPayload) => {
+  updateUI({
+    progress: status.progress,
+    currentStep: status.currentStep,
+    totalSteps: status.totalSteps,
+    message: status.substatus,
+  });
+};
+
+await mina.execute({
+  quote,
+  signer,
+  onStepChange: handleStepChange,
+  onStatusChange: handleStatusChange,
+});
+```

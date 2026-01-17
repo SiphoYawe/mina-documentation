@@ -1,0 +1,284 @@
+---
+title: "useMina"
+description: "Access the Mina SDK instance from React context"
+---
+
+# useMina
+
+The `useMina` hook provides access to the Mina SDK instance and its initialization status.
+
+## Import
+
+```typescript
+import { useMina } from '@siphoyawe/mina-sdk/react';
+```
+
+## Signature
+
+```typescript
+function useMina(): MinaContextValue
+```
+
+## Parameters
+
+This hook takes no parameters.
+
+## Returns
+
+### MinaContextValue
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `mina` | `Mina \| null` | The SDK instance, or `null` if not initialized |
+| `isReady` | `boolean` | `true` when SDK is ready to use |
+| `error` | `Error \| null` | Initialization error, if any |
+
+## Basic Usage
+
+```typescript
+'use client';
+
+import { useMina } from '@siphoyawe/mina-sdk/react';
+
+function BridgeWidget() {
+  const { mina, isReady, error } = useMina();
+
+  if (error) {
+    return <div>Error: {error.message}</div>;
+  }
+
+  if (!isReady || !mina) {
+    return <div>Loading...</div>;
+  }
+
+  return <div>SDK is ready</div>;
+}
+```
+
+## Fetching Data
+
+Use the SDK instance to fetch chains, tokens, and quotes:
+
+```typescript
+'use client';
+
+import { useState, useEffect } from 'react';
+import { useMina } from '@siphoyawe/mina-sdk/react';
+import type { Chain } from '@siphoyawe/mina-sdk/react';
+
+function ChainSelector() {
+  const { mina, isReady } = useMina();
+  const [chains, setChains] = useState<Chain[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!isReady || !mina) return;
+
+    const fetchChains = async () => {
+      try {
+        const { chains } = await mina.getChains();
+        setChains(chains);
+      } catch (err) {
+        console.error('Failed to fetch chains:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchChains();
+  }, [mina, isReady]);
+
+  if (!isReady || loading) {
+    return <div>Loading chains...</div>;
+  }
+
+  return (
+    <select>
+      {chains.map((chain) => (
+        <option key={chain.id} value={chain.id}>
+          {chain.name}
+        </option>
+      ))}
+    </select>
+  );
+}
+```
+
+## Error Handling
+
+Always handle the error state for a robust user experience:
+
+```typescript
+'use client';
+
+import { useMina } from '@siphoyawe/mina-sdk/react';
+
+function BridgeApp() {
+  const { mina, isReady, error } = useMina();
+
+  // Handle initialization error
+  if (error) {
+    return (
+      <div className="error-container">
+        <h2>SDK Initialization Failed</h2>
+        <p>{error.message}</p>
+        <button onClick={() => window.location.reload()}>
+          Reload Page
+        </button>
+      </div>
+    );
+  }
+
+  // Handle loading state
+  if (!isReady) {
+    return (
+      <div className="loading-container">
+        <span className="spinner" />
+        <p>Initializing bridge...</p>
+      </div>
+    );
+  }
+
+  // SDK is ready - mina is guaranteed to be non-null here
+  if (!mina) {
+    return null; // TypeScript guard
+  }
+
+  return <BridgeForm mina={mina} />;
+}
+```
+
+## Executing Transactions
+
+Use the SDK to execute bridge transactions:
+
+```typescript
+'use client';
+
+import { useState } from 'react';
+import { useMina } from '@siphoyawe/mina-sdk/react';
+import type { Quote } from '@siphoyawe/mina-sdk/react';
+
+interface ExecuteButtonProps {
+  quote: Quote;
+  signer: any; // Your wallet signer
+}
+
+function ExecuteButton({ quote, signer }: ExecuteButtonProps) {
+  const { mina, isReady } = useMina();
+  const [executing, setExecuting] = useState(false);
+
+  const handleExecute = async () => {
+    if (!mina || !isReady) return;
+
+    setExecuting(true);
+    try {
+      const result = await mina.execute({
+        quote,
+        signer,
+        onStepChange: (step) => {
+          console.log(`Step ${step.stepId}: ${step.status}`);
+        },
+        onStatusChange: (status) => {
+          console.log(`Transaction status: ${status.status}`);
+        },
+      });
+
+      console.log('Bridge complete:', result);
+    } catch (err) {
+      console.error('Bridge failed:', err);
+    } finally {
+      setExecuting(false);
+    }
+  };
+
+  return (
+    <button
+      onClick={handleExecute}
+      disabled={!isReady || executing}
+    >
+      {executing ? 'Bridging...' : 'Bridge'}
+    </button>
+  );
+}
+```
+
+## TypeScript Usage
+
+The hook provides proper TypeScript types:
+
+```typescript
+'use client';
+
+import { useMina, type MinaContextValue } from '@siphoyawe/mina-sdk/react';
+
+function TypedComponent() {
+  // Fully typed context value
+  const context: MinaContextValue = useMina();
+  const { mina, isReady, error } = context;
+
+  // Type guard for mina
+  if (!mina) {
+    return null;
+  }
+
+  // mina is now typed as Mina (non-null)
+  return <div>{mina.config.integrator}</div>;
+}
+```
+
+## Provider Requirement
+
+<Warning>
+`useMina` must be used within a `MinaProvider`. Using it outside will throw an error.
+</Warning>
+
+```typescript
+// This will throw an error
+function OrphanedComponent() {
+  const { mina } = useMina(); // Error: useMina must be used within MinaProvider
+  return <div />;
+}
+
+// Correct usage
+function App() {
+  return (
+    <MinaProvider config={{ integrator: 'my-app' }}>
+      <ChildComponent /> {/* useMina works here */}
+    </MinaProvider>
+  );
+}
+```
+
+## Best Practices
+
+<Note>
+**Performance Tips:**
+
+1. Check `isReady` before making SDK calls to avoid null reference errors
+2. Use the specialized hooks (`useQuote`, `useTokenBalance`, `useTransactionStatus`) for common operations - they handle loading states and caching automatically
+3. Memoize callbacks that use `mina` to prevent unnecessary re-renders
+4. Only use `useMina` directly when you need low-level SDK access
+</Note>
+
+## When to Use useMina vs Specialized Hooks
+
+| Use Case | Recommended Hook |
+|----------|-----------------|
+| Get quote with debouncing | `useQuote` |
+| Track token balance | `useTokenBalance` |
+| Monitor transaction status | `useTransactionStatus` |
+| Fetch chains/tokens | `useMina` |
+| Execute transactions | `useMina` |
+| Custom SDK operations | `useMina` |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="useQuote" icon="calculator" href="/react/hooks/use-quote">
+    Fetch bridge quotes with automatic debouncing
+  </Card>
+  <Card title="useTokenBalance" icon="wallet" href="/react/hooks/use-token-balance">
+    Track wallet token balances
+  </Card>
+</CardGroup>

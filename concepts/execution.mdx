@@ -1,0 +1,405 @@
+---
+title: "Execution"
+description: "Execute bridge transactions with real-time progress tracking"
+---
+
+# Execution
+
+The Mina SDK provides a comprehensive execution system for bridge transactions with step-by-step tracking and status callbacks.
+
+## Overview
+
+After obtaining a quote, use the `execute()` method to perform the bridge transaction. The execution process handles:
+- Token approvals (if needed)
+- Swap transactions
+- Bridge transactions
+- Status monitoring
+- Real-time progress callbacks
+
+## Execute Method
+
+### execute(options)
+
+Executes a bridge transaction with the provided quote and signer.
+
+```typescript
+import { Mina } from '@siphoyawe/mina-sdk';
+
+const mina = new Mina({ integrator: 'my-app' });
+
+// First, get a quote
+const quote = await mina.getQuote({
+  fromChainId: 42161,
+  toChainId: 999,
+  fromToken: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
+  toToken: '0xb88339cb7199b77e23db6e890353e22632ba630f',
+  fromAmount: '100000000',
+  fromAddress: '0x...',
+});
+
+// Then execute with callbacks
+const result = await mina.execute({
+  quote,
+  signer: walletSigner, // Your wallet signer
+  onStepChange: (step) => {
+    console.log(`Step ${step.stepId}: ${step.status}`);
+  },
+  onStatusChange: (status) => {
+    console.log(`Progress: ${status.progress}%`);
+  },
+});
+
+if (result.status === 'completed') {
+  console.log('Bridge complete! TxHash:', result.txHash);
+}
+```
+
+## Execute Options
+
+### ExecuteOptions
+
+```typescript
+interface ExecuteOptions {
+  /** Quote to execute */
+  quote: Quote;
+  /** Signer for transaction signing */
+  signer: TransactionSigner;
+  /** Callback for step status updates */
+  onStepChange?: OnStepChange;
+  /** Callback for overall status updates */
+  onStatusChange?: OnStatusChange;
+  /** Callback before approval transaction */
+  onApprovalRequest?: () => void;
+  /** Callback before main transaction */
+  onTransactionRequest?: () => void;
+  /** Allow infinite token approval */
+  infiniteApproval?: boolean;
+}
+```
+
+## Transaction Signer
+
+The SDK requires a signer that implements the `TransactionSigner` interface:
+
+```typescript
+interface TransactionSigner {
+  /** Sign and send a transaction */
+  sendTransaction: (request: TransactionRequestData) => Promise<string>;
+  /** Get the signer's address */
+  getAddress: () => Promise<string>;
+  /** Get the current chain ID */
+  getChainId: () => Promise<number>;
+}
+
+interface TransactionRequestData {
+  to: string;
+  data: string;
+  value: string;
+  gasLimit?: string;
+  gasPrice?: string;
+  chainId: number;
+}
+```
+
+### Using with Viem/Wagmi
+
+```typescript
+import { useWalletClient } from 'wagmi';
+import { Mina, TransactionSigner } from '@siphoyawe/mina-sdk';
+
+function createSigner(walletClient: WalletClient): TransactionSigner {
+  return {
+    async sendTransaction(request) {
+      const hash = await walletClient.sendTransaction({
+        to: request.to as `0x${string}`,
+        data: request.data as `0x${string}`,
+        value: BigInt(request.value),
+        gas: request.gasLimit ? BigInt(request.gasLimit) : undefined,
+        chain: walletClient.chain,
+      });
+      return hash;
+    },
+    async getAddress() {
+      const [address] = await walletClient.getAddresses();
+      return address;
+    },
+    async getChainId() {
+      return walletClient.chain?.id ?? 1;
+    },
+  };
+}
+```
+
+## Step Types
+
+Bridge execution consists of multiple step types:
+
+| Step Type | Description |
+|-----------|-------------|
+| `approve` | Token approval for spending |
+| `swap` | Token swap on source chain |
+| `bridge` | Cross-chain bridge transfer |
+| `deposit` | Deposit to Hyperliquid L1 |
+
+## Status Callbacks
+
+### onStepChange
+
+Called when individual step status changes:
+
+```typescript
+interface StepStatusPayload {
+  /** Step identifier */
+  stepId: string;
+  /** Type of step */
+  step: StepType;
+  /** Current status */
+  status: 'pending' | 'active' | 'completed' | 'failed';
+  /** Transaction hash (if submitted) */
+  txHash: string | null;
+  /** Error (if failed) */
+  error: Error | null;
+  /** Timestamp of last update */
+  timestamp: number;
+}
+
+mina.execute({
+  quote,
+  signer,
+  onStepChange: (stepStatus) => {
+    switch (stepStatus.status) {
+      case 'pending':
+        console.log(`Step ${stepStatus.stepId} waiting...`);
+        break;
+      case 'active':
+        console.log(`Step ${stepStatus.stepId} executing...`);
+        break;
+      case 'completed':
+        console.log(`Step ${stepStatus.stepId} done! Tx: ${stepStatus.txHash}`);
+        break;
+      case 'failed':
+        console.error(`Step ${stepStatus.stepId} failed:`, stepStatus.error);
+        break;
+    }
+  },
+});
+```
+
+### onStatusChange
+
+Called for overall transaction status updates:
+
+```typescript
+interface TransactionStatusPayload {
+  /** Overall status */
+  status: 'pending' | 'in_progress' | 'completed' | 'failed';
+  /** Substatus for detailed state */
+  substatus: string;
+  /** Current step index (1-based) */
+  currentStep: number;
+  /** Total number of steps */
+  totalSteps: number;
+  /** Input amount */
+  fromAmount: string;
+  /** Output amount (or expected) */
+  toAmount: string | null;
+  /** Bridge transaction hash */
+  txHash: string;
+  /** Receiving transaction hash on destination */
+  receivingTxHash: string | null;
+  /** Progress percentage (0-100) */
+  progress: number;
+  /** Estimated time remaining in seconds */
+  estimatedTime: number;
+}
+
+mina.execute({
+  quote,
+  signer,
+  onStatusChange: (status) => {
+    console.log(`Status: ${status.status}`);
+    console.log(`Step: ${status.currentStep}/${status.totalSteps}`);
+    console.log(`Progress: ${status.progress}%`);
+
+    if (status.receivingTxHash) {
+      console.log(`Receiving on HyperEVM: ${status.receivingTxHash}`);
+    }
+  },
+});
+```
+
+## Execution Result
+
+### ExecutionResult
+
+```typescript
+interface ExecutionResult {
+  /** Unique execution ID for status tracking */
+  executionId: string;
+  /** Overall status */
+  status: 'pending' | 'executing' | 'completed' | 'failed';
+  /** All step statuses */
+  steps: StepStatus[];
+  /** Final bridge transaction hash */
+  txHash?: string;
+  /** Input amount that was bridged */
+  fromAmount?: string;
+  /** Output amount received (or expected) */
+  toAmount?: string;
+  /** Received amount after bridge completion */
+  receivedAmount?: string;
+  /** Deposit transaction hash (if auto-deposit was enabled) */
+  depositTxHash?: string | null;
+  /** Error (if failed) */
+  error?: Error;
+}
+```
+
+## Example: Complete Execution Flow
+
+```typescript
+import { Mina, TransactionSigner } from '@siphoyawe/mina-sdk';
+
+const mina = new Mina({
+  integrator: 'my-app',
+  autoDeposit: true  // Enable auto-deposit to L1
+});
+
+async function executeBridge(
+  signer: TransactionSigner,
+  params: {
+    fromChainId: number;
+    fromToken: string;
+    amount: string;
+  }
+) {
+  // 1. Get quote
+  const fromAddress = await signer.getAddress();
+
+  const quote = await mina.getQuote({
+    fromChainId: params.fromChainId,
+    toChainId: 999,
+    fromToken: params.fromToken,
+    toToken: '0xb88339cb7199b77e23db6e890353e22632ba630f',
+    fromAmount: params.amount,
+    fromAddress,
+  });
+
+  console.log('Quote received:');
+  console.log(`  Expected output: ${quote.toAmount}`);
+  console.log(`  Fees: $${quote.fees.totalUsd.toFixed(2)}`);
+
+  // 2. Execute bridge
+  const result = await mina.execute({
+    quote,
+    signer,
+    onApprovalRequest: () => {
+      console.log('Please approve the token spend in your wallet...');
+    },
+    onTransactionRequest: () => {
+      console.log('Please confirm the bridge transaction...');
+    },
+    onStepChange: (step) => {
+      console.log(`[${step.step}] ${step.status}`);
+      if (step.txHash) {
+        console.log(`  Tx: ${step.txHash}`);
+      }
+    },
+    onStatusChange: (status) => {
+      const progressBar = '='.repeat(status.progress / 5) + '-'.repeat(20 - status.progress / 5);
+      console.log(`[${progressBar}] ${status.progress}% - ${status.substatus}`);
+    },
+    infiniteApproval: false, // Use exact approval for security
+  });
+
+  // 3. Handle result
+  if (result.status === 'completed') {
+    console.log('\nBridge completed successfully!');
+    console.log(`Transaction: ${result.txHash}`);
+    console.log(`Received: ${result.receivedAmount}`);
+
+    if (result.depositTxHash) {
+      console.log(`Deposit to L1: ${result.depositTxHash}`);
+    }
+  } else if (result.status === 'failed') {
+    console.error('\nBridge failed:', result.error?.message);
+  }
+
+  return result;
+}
+```
+
+## Error Handling
+
+The SDK throws specific errors during execution:
+
+```typescript
+import {
+  QuoteExpiredError,
+  TransactionFailedError,
+  UserRejectedError,
+  NetworkError,
+} from '@siphoyawe/mina-sdk';
+
+try {
+  const result = await mina.execute({ quote, signer });
+} catch (error) {
+  if (error instanceof QuoteExpiredError) {
+    console.error('Quote expired, please get a new quote');
+    // Get new quote and retry
+  } else if (error instanceof UserRejectedError) {
+    console.error('User rejected the transaction');
+    // User cancelled in wallet
+  } else if (error instanceof TransactionFailedError) {
+    console.error(`Transaction failed: ${error.message}`);
+    console.error(`Tx Hash: ${error.txHash}`);
+    console.error(`Reason: ${error.reason}`);
+  } else if (error instanceof NetworkError) {
+    console.error('Network error, please try again');
+  }
+}
+```
+
+<Warning>
+Always validate that the quote has not expired before executing. Quotes are valid for 60 seconds.
+</Warning>
+
+## Token Approvals
+
+For ERC20 tokens, an approval transaction is required before bridging:
+
+```typescript
+mina.execute({
+  quote,
+  signer,
+  // Use infinite approval to avoid repeated approvals
+  infiniteApproval: true,
+
+  onApprovalRequest: () => {
+    // Show approval UI to user
+    showApprovalModal();
+  },
+
+  onStepChange: (step) => {
+    if (step.step === 'approval' && step.status === 'completed') {
+      // Approval confirmed, bridge will proceed
+      hideApprovalModal();
+    }
+  },
+});
+```
+
+<Note>
+Setting `infiniteApproval: false` (default) approves only the exact amount needed, which is more secure but requires approval for each transaction.
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Auto-Deposit" icon="bolt" href="/concepts/auto-deposit">
+    Learn about automatic L1 deposits
+  </Card>
+  <Card title="Slippage" icon="sliders" href="/concepts/slippage">
+    Configure slippage settings
+  </Card>
+</CardGroup>

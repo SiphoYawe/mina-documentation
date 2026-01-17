@@ -1,0 +1,287 @@
+---
+title: "MinaProvider"
+description: "React context provider for the Mina SDK"
+---
+
+# MinaProvider
+
+The `MinaProvider` component initializes and shares a Mina SDK instance with all child components through React context.
+
+## Import
+
+```typescript
+import { MinaProvider } from '@siphoyawe/mina-sdk/react';
+```
+
+## Props
+
+### MinaProviderProps
+
+| Prop | Type | Required | Description |
+|------|------|----------|-------------|
+| `config` | `MinaConfig` | Yes | Configuration for the SDK instance |
+| `children` | `ReactNode` | Yes | Child components that need SDK access |
+
+### MinaConfig
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `integrator` | `string` | **Required** | Your application identifier |
+| `autoDeposit` | `boolean` | `true` | Auto-deposit to Hyperliquid L1 |
+| `defaultSlippage` | `number` | `0.005` | Default slippage tolerance (0.5%) |
+| `rpcUrls` | `Record<number, string>` | - | Custom RPC URLs by chain ID |
+
+## Context Value
+
+### MinaContextValue
+
+The provider exposes the following through context:
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `mina` | `Mina \| null` | The SDK instance (null during initialization) |
+| `isReady` | `boolean` | Whether the SDK has completed initialization |
+| `error` | `Error \| null` | Any initialization error that occurred |
+
+## Basic Setup
+
+```typescript
+import { MinaProvider } from '@siphoyawe/mina-sdk/react';
+
+function App() {
+  return (
+    <MinaProvider config={{ integrator: 'my-app' }}>
+      <YourApp />
+    </MinaProvider>
+  );
+}
+```
+
+## Full Configuration
+
+```typescript
+import { MinaProvider } from '@siphoyawe/mina-sdk/react';
+
+function App() {
+  return (
+    <MinaProvider
+      config={{
+        // Required: Your app identifier for analytics
+        integrator: 'my-trading-app',
+
+        // Auto-deposit bridged USDC to Hyperliquid L1
+        autoDeposit: true,
+
+        // Default slippage tolerance (0.5%)
+        defaultSlippage: 0.005,
+
+        // Custom RPC URLs for better reliability
+        rpcUrls: {
+          1: process.env.NEXT_PUBLIC_ETH_RPC,
+          42161: process.env.NEXT_PUBLIC_ARB_RPC,
+          8453: process.env.NEXT_PUBLIC_BASE_RPC,
+        },
+      }}
+    >
+      <YourApp />
+    </MinaProvider>
+  );
+}
+```
+
+## Next.js App Router Setup
+
+For Next.js App Router, create a separate client component for providers:
+
+<CodeGroup>
+```typescript app/providers.tsx
+'use client';
+
+import { MinaProvider } from '@siphoyawe/mina-sdk/react';
+import type { ReactNode } from 'react';
+
+interface ProvidersProps {
+  children: ReactNode;
+}
+
+export function Providers({ children }: ProvidersProps) {
+  return (
+    <MinaProvider
+      config={{
+        integrator: 'my-nextjs-app',
+        autoDeposit: true,
+      }}
+    >
+      {children}
+    </MinaProvider>
+  );
+}
+```
+
+```typescript app/layout.tsx
+import { Providers } from './providers';
+
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <html lang="en">
+      <body>
+        <Providers>{children}</Providers>
+      </body>
+    </html>
+  );
+}
+```
+</CodeGroup>
+
+<Warning>
+The `'use client'` directive is required. MinaProvider uses React hooks internally and cannot be rendered on the server.
+</Warning>
+
+## Combining with Other Providers
+
+When using multiple providers (e.g., wagmi, TanStack Query), nest them appropriately:
+
+```typescript app/providers.tsx
+'use client';
+
+import { MinaProvider } from '@siphoyawe/mina-sdk/react';
+import { WagmiProvider } from 'wagmi';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { config } from './wagmi-config';
+
+const queryClient = new QueryClient();
+
+export function Providers({ children }: { children: React.ReactNode }) {
+  return (
+    <WagmiProvider config={config}>
+      <QueryClientProvider client={queryClient}>
+        <MinaProvider config={{ integrator: 'my-app' }}>
+          {children}
+        </MinaProvider>
+      </QueryClientProvider>
+    </WagmiProvider>
+  );
+}
+```
+
+<Note>
+MinaProvider does not depend on wagmi or TanStack Query. You can use it standalone or alongside these libraries.
+</Note>
+
+## Dynamic Configuration
+
+For environment-based configuration:
+
+```typescript app/providers.tsx
+'use client';
+
+import { MinaProvider, type MinaConfig } from '@siphoyawe/mina-sdk/react';
+import { useMemo } from 'react';
+
+function getMinaConfig(): MinaConfig {
+  const isDev = process.env.NODE_ENV === 'development';
+
+  return {
+    integrator: isDev ? 'my-app-dev' : 'my-app-prod',
+    autoDeposit: true,
+    defaultSlippage: isDev ? 0.01 : 0.005,
+    rpcUrls: {
+      1: process.env.NEXT_PUBLIC_ETH_RPC,
+      42161: process.env.NEXT_PUBLIC_ARB_RPC,
+    },
+  };
+}
+
+export function Providers({ children }: { children: React.ReactNode }) {
+  const config = useMemo(() => getMinaConfig(), []);
+
+  return (
+    <MinaProvider config={config}>
+      {children}
+    </MinaProvider>
+  );
+}
+```
+
+## Error Handling
+
+Handle initialization errors in child components:
+
+```typescript
+'use client';
+
+import { useMina } from '@siphoyawe/mina-sdk/react';
+
+function BridgeWidget() {
+  const { mina, isReady, error } = useMina();
+
+  if (error) {
+    return (
+      <div className="error-state">
+        <h3>Failed to initialize SDK</h3>
+        <p>{error.message}</p>
+        <button onClick={() => window.location.reload()}>
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  if (!isReady || !mina) {
+    return <div>Initializing...</div>;
+  }
+
+  return <div>Bridge widget ready</div>;
+}
+```
+
+## Configuration Stability
+
+The provider uses stable configuration comparison. If the config object reference changes but values remain the same, the SDK will not reinitialize:
+
+```typescript
+// This is fine - provider handles reference changes
+function App() {
+  return (
+    <MinaProvider
+      config={{ integrator: 'my-app' }} // New object each render
+    >
+      <YourApp />
+    </MinaProvider>
+  );
+}
+
+// But for optimal performance, memoize the config
+function App() {
+  const config = useMemo(() => ({ integrator: 'my-app' }), []);
+
+  return (
+    <MinaProvider config={config}>
+      <YourApp />
+    </MinaProvider>
+  );
+}
+```
+
+## Best Practices
+
+1. **Place provider high in the tree** - Wrap your entire app or the section that needs bridge functionality
+2. **Use `'use client'`** - Required for Next.js App Router
+3. **Memoize config** - Prevents unnecessary re-renders
+4. **Handle initialization states** - Check `isReady` and `error` in consuming components
+5. **Use environment variables** - For RPC URLs and environment-specific config
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="useMina" icon="hook" href="/react/hooks/use-mina">
+    Access the SDK instance in components
+  </Card>
+  <Card title="useQuote" icon="calculator" href="/react/hooks/use-quote">
+    Fetch bridge quotes
+  </Card>
+</CardGroup>

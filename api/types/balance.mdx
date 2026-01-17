@@ -1,0 +1,360 @@
+---
+title: "Balance Types"
+description: "TypeScript type definitions for token balances and validation"
+---
+
+# Balance Types
+
+Types for representing and validating token balances.
+
+## Balance
+
+Basic token balance information.
+
+```typescript
+interface Balance {
+  /** Token metadata */
+  token: Token;
+  /** Balance in smallest unit */
+  balance: string;
+  /** Balance formatted with decimals */
+  formatted: string;
+  /** Balance in USD (optional) */
+  balanceUsd?: number;
+}
+```
+
+### Properties
+
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| `token` | `Token` | Yes | Token metadata (address, symbol, decimals, etc.) |
+| `balance` | `string` | Yes | Raw balance in smallest unit (e.g., wei for ETH, 6 decimals for USDC) |
+| `formatted` | `string` | Yes | Human-readable balance with decimal formatting |
+| `balanceUsd` | `number` | No | USD value of the balance (if price data available) |
+
+### Example
+
+```typescript
+const balance = await mina.getBalance({
+  address: walletAddress,
+  chainId: 1,
+  tokenAddress: USDC_ADDRESS,
+});
+
+console.log(`${balance.formatted} ${balance.token.symbol}`);
+// "1000.50 USDC"
+
+if (balance.balanceUsd) {
+  console.log(`Worth: $${balance.balanceUsd.toFixed(2)}`);
+}
+```
+
+---
+
+## BalanceParams
+
+Parameters for fetching a single token balance.
+
+```typescript
+interface BalanceParams {
+  /** Wallet address to fetch balance for */
+  address: string;
+  /** Chain ID */
+  chainId: number;
+  /** Token contract address (or NATIVE_TOKEN_ADDRESS for native token) */
+  tokenAddress: string;
+}
+```
+
+### Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `address` | `string` | Wallet address to query (must be valid Ethereum address) |
+| `chainId` | `number` | Chain ID to query (e.g., 1 for Ethereum, 999 for HyperEVM) |
+| `tokenAddress` | `string` | Token contract address. Use `NATIVE_TOKEN_ADDRESS` for native gas tokens. |
+
+### Example
+
+```typescript
+import { NATIVE_TOKEN_ADDRESS } from '@mina-bridge/sdk';
+
+// Get USDC balance
+const usdcBalance = await mina.getBalance({
+  address: '0x1234...',
+  chainId: 1,
+  tokenAddress: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+});
+
+// Get native ETH balance
+const ethBalance = await mina.getBalance({
+  address: '0x1234...',
+  chainId: 1,
+  tokenAddress: NATIVE_TOKEN_ADDRESS,
+});
+```
+
+---
+
+## MultiBalanceParams
+
+Parameters for fetching balances across multiple chains.
+
+```typescript
+interface MultiBalanceParams {
+  /** Wallet address to fetch balances for */
+  address: string;
+  /** Chain IDs to fetch balances from */
+  chainIds: number[];
+  /** Optional: specific token addresses per chain */
+  tokenAddresses?: Record<number, string[]>;
+}
+```
+
+### Properties
+
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| `address` | `string` | Yes | Wallet address to query |
+| `chainIds` | `number[]` | Yes | Array of chain IDs to query |
+| `tokenAddresses` | `Record<number, string[]>` | No | Map of chain ID to token addresses. If not provided, fetches all bridgeable tokens. |
+
+### Example
+
+```typescript
+const balances = await mina.getBalances({
+  address: walletAddress,
+  chainIds: [1, 42161, 10], // Ethereum, Arbitrum, Optimism
+  tokenAddresses: {
+    1: [USDC_ETH, USDT_ETH],
+    42161: [USDC_ARB],
+    10: [USDC_OP],
+  },
+});
+```
+
+---
+
+## BalanceWithMetadata
+
+Extended balance with additional utility properties.
+
+```typescript
+interface BalanceWithMetadata extends Balance {
+  /** Whether the balance is greater than zero */
+  hasBalance: boolean;
+}
+```
+
+### Properties
+
+Inherits all properties from `Balance`, plus:
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `hasBalance` | `boolean` | `true` if balance is greater than zero |
+
+### Example
+
+```typescript
+const balance = await mina.getBalance(params);
+
+if (balance.hasBalance) {
+  // User has tokens, can proceed with bridge
+  enableBridgeButton();
+} else {
+  // User has no balance
+  showDepositPrompt();
+}
+```
+
+---
+
+## BalancesResponse
+
+Response for multi-chain balance queries.
+
+```typescript
+interface BalancesResponse {
+  /** Balances grouped by chain ID */
+  balances: Record<number, BalanceWithMetadata[]>;
+  /** Total USD value across all chains */
+  totalUsd: number;
+  /** Whether the data is from stale cache */
+  isStale: boolean;
+  /** Timestamp when data was cached (null if fresh) */
+  cachedAt: number | null;
+}
+```
+
+### Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `balances` | `Record<number, BalanceWithMetadata[]>` | Balances grouped by chain ID |
+| `totalUsd` | `number` | Total USD value of all balances |
+| `isStale` | `boolean` | `true` if any data came from stale cache |
+| `cachedAt` | `number \| null` | Earliest cache timestamp, or `null` if all fresh |
+
+### Example
+
+```typescript
+const response = await mina.getBalances({
+  address: walletAddress,
+  chainIds: [1, 42161, 10],
+});
+
+console.log(`Total portfolio: $${response.totalUsd.toFixed(2)}`);
+
+for (const [chainId, chainBalances] of Object.entries(response.balances)) {
+  console.log(`Chain ${chainId}:`);
+  chainBalances.forEach(b => {
+    if (b.hasBalance) {
+      console.log(`  ${b.formatted} ${b.token.symbol}`);
+    }
+  });
+}
+```
+
+---
+
+## SingleBalanceResponse
+
+Response for single balance queries with cache metadata.
+
+```typescript
+interface SingleBalanceResponse {
+  /** The balance data */
+  balance: BalanceWithMetadata;
+  /** Whether the data is from stale cache */
+  isStale: boolean;
+  /** Timestamp when data was cached (null if fresh) */
+  cachedAt: number | null;
+}
+```
+
+### Example
+
+```typescript
+const response = await mina.getBalanceWithMetadata({
+  address: walletAddress,
+  chainId: 1,
+  tokenAddress: USDC_ADDRESS,
+});
+
+if (response.isStale) {
+  showWarning('Balance data may be outdated');
+}
+
+console.log(`Balance: ${response.balance.formatted}`);
+```
+
+---
+
+## BalanceValidation
+
+Result of balance validation against a quote.
+
+```typescript
+interface BalanceValidation {
+  /** Overall validation result */
+  valid: boolean;
+  /** Whether token balance is sufficient */
+  tokenSufficient: boolean;
+  /** Whether gas balance is sufficient */
+  gasSufficient: boolean;
+  /** List of warnings if any */
+  warnings: BalanceWarning[];
+}
+```
+
+### Example
+
+```typescript
+const validation = await mina.validateBalance(quote, walletAddress);
+
+if (!validation.valid) {
+  validation.warnings.forEach(warning => {
+    if (warning.type === 'INSUFFICIENT_BALANCE') {
+      console.error(warning.message);
+      console.error(`Need ${warning.shortfall} more ${warning.token.symbol}`);
+    }
+    if (warning.type === 'INSUFFICIENT_GAS') {
+      console.error('Not enough gas:', warning.message);
+    }
+  });
+}
+```
+
+---
+
+## BalanceWarning
+
+Warning details when balance validation fails.
+
+```typescript
+interface BalanceWarning {
+  /** Type of warning */
+  type: BalanceWarningType;
+  /** Token that is insufficient */
+  token: Token;
+  /** Amount required for the transaction */
+  required: string;
+  /** User's available balance */
+  available: string;
+  /** Shortfall amount needed */
+  shortfall: string;
+  /** Human-readable message */
+  message: string;
+}
+
+type BalanceWarningType = 'INSUFFICIENT_BALANCE' | 'INSUFFICIENT_GAS';
+```
+
+### Warning Types
+
+| Type | Description |
+|------|-------------|
+| `'INSUFFICIENT_BALANCE'` | Not enough of the token being bridged |
+| `'INSUFFICIENT_GAS'` | Not enough native token for gas fees |
+
+---
+
+## BalanceCheckResult
+
+Lightweight balance check result.
+
+```typescript
+interface BalanceCheckResult {
+  /** Whether balance is sufficient for the amount */
+  sufficient: boolean;
+  /** User's balance in smallest unit */
+  balance: string;
+  /** User's formatted balance */
+  formatted: string;
+  /** Balance in USD (if available) */
+  balanceUsd?: number;
+  /** Required amount in smallest unit */
+  required: string;
+  /** Shortfall if insufficient (in smallest unit) */
+  shortfall?: string;
+  /** Token info */
+  token: Token;
+}
+```
+
+### Example
+
+```typescript
+const check = await mina.checkBalance(
+  1,                    // chainId
+  USDC_ADDRESS,         // tokenAddress
+  walletAddress,        // walletAddress
+  '1000000000'          // amount (1000 USDC)
+);
+
+if (!check.sufficient) {
+  console.log(`Need ${check.shortfall} more (${check.formatted} available)`);
+}
+```

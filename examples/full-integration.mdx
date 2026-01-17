@@ -1,0 +1,1070 @@
+---
+title: "Full Bridge Widget"
+description: "Complete React bridge widget integrating all SDK features"
+---
+
+# Full Bridge Widget
+
+This example combines chain selection, token selection, amount input, quote display, execution, and status tracking into a complete bridge widget.
+
+## Overview
+
+The full integration includes:
+
+- Chain and token selection with balance display
+- Amount input with max button
+- Real-time quote fetching with debouncing
+- Execution with wallet integration
+- Transaction status tracking
+- Comprehensive error handling
+
+## Complete Widget Component
+
+<CodeGroup>
+```tsx BridgeWidget.tsx
+'use client';
+
+import { useState, useCallback, useMemo } from 'react';
+import {
+  MinaProvider,
+  useMina,
+  useQuote,
+  useTokenBalance,
+  useTransactionStatus,
+} from '@siphoyawe/mina-sdk/react';
+import type {
+  Chain,
+  Token,
+  Quote,
+  ExecutionResult,
+  StepStatusPayload,
+  TransactionStatusPayload,
+} from '@siphoyawe/mina-sdk/react';
+import { useAccount, useWalletClient } from 'wagmi';
+
+// Main widget component
+export function BridgeWidget() {
+  return (
+    <MinaProvider config={{ integrator: 'my-bridge-app', autoDeposit: true }}>
+      <BridgeWidgetInner />
+    </MinaProvider>
+  );
+}
+
+function BridgeWidgetInner() {
+  const { mina, isReady } = useMina();
+  const { address, isConnected } = useAccount();
+  const { data: walletClient } = useWalletClient();
+
+  // Form state
+  const [sourceChain, setSourceChain] = useState<Chain | null>(null);
+  const [sourceToken, setSourceToken] = useState<Token | null>(null);
+  const [amount, setAmount] = useState('');
+  const [slippage, setSlippage] = useState(0.5);
+
+  // Execution state
+  const [isExecuting, setIsExecuting] = useState(false);
+  const [executionResult, setExecutionResult] = useState<ExecutionResult | null>(null);
+  const [currentStep, setCurrentStep] = useState<StepStatusPayload | null>(null);
+  const [txHash, setTxHash] = useState<string | null>(null);
+
+  // Convert amount to smallest unit
+  const amountInSmallestUnit = useMemo(() => {
+    if (!amount || !sourceToken) return '';
+    try {
+      const parsed = parseFloat(amount);
+      if (isNaN(parsed) || parsed <= 0) return '';
+      return (BigInt(Math.floor(parsed * 10 ** sourceToken.decimals))).toString();
+    } catch {
+      return '';
+    }
+  }, [amount, sourceToken]);
+
+  // Fetch quote with useQuote hook
+  const { quote, isLoading: isQuoteLoading, error: quoteError, refetch: refetchQuote } = useQuote({
+    fromChain: sourceChain?.id,
+    toChain: 999, // HyperEVM
+    fromToken: sourceToken?.address,
+    toToken: '0xb88339cb7199b77e23db6e890353e22632ba630f', // USDC on HyperEVM
+    amount: amountInSmallestUnit,
+    fromAddress: address,
+    slippageTolerance: slippage,
+    enabled: Boolean(sourceChain && sourceToken && amountInSmallestUnit && address),
+  });
+
+  // Fetch source token balance
+  const {
+    formattedBalance,
+    balance: rawBalance,
+    isLoading: isBalanceLoading,
+    refetch: refetchBalance,
+  } = useTokenBalance({
+    chainId: sourceChain?.id,
+    tokenAddress: sourceToken?.address,
+    walletAddress: address ?? undefined,
+    refetchInterval: 15000,
+  });
+
+  // Track transaction status
+  const { status: txStatus } = useTransactionStatus(txHash);
+
+  // Create signer from wallet client
+  const signer = useMemo(() => {
+    if (!walletClient || !sourceChain) return null;
+
+    return {
+      sendTransaction: async (request: {
+        to: string;
+        data: string;
+        value: string;
+        chainId: number;
+      }) => {
+        const hash = await walletClient.sendTransaction({
+          to: request.to as `0x${string}`,
+          data: request.data as `0x${string}`,
+          value: BigInt(request.value),
+          chain: {
+            id: request.chainId,
+            name: sourceChain.name,
+            nativeCurrency: {
+              name: sourceChain.nativeToken.name,
+              symbol: sourceChain.nativeToken.symbol,
+              decimals: sourceChain.nativeToken.decimals,
+            },
+            rpcUrls: { default: { http: [] } },
+          },
+        });
+        return hash;
+      },
+      getAddress: async () => walletClient.account.address,
+      getChainId: async () => sourceChain.id,
+    };
+  }, [walletClient, sourceChain]);
+
+  // Handle max button
+  const handleMaxClick = useCallback(() => {
+    if (formattedBalance && sourceToken) {
+      setAmount(formattedBalance);
+    }
+  }, [formattedBalance, sourceToken]);
+
+  // Handle execution
+  const handleExecute = useCallback(async () => {
+    if (!mina || !quote || !signer) return;
+
+    setIsExecuting(true);
+    setExecutionResult(null);
+    setCurrentStep(null);
+
+    try {
+      const result = await mina.execute({
+        quote,
+        signer,
+        onStepChange: (step: StepStatusPayload) => {
+          setCurrentStep(step);
+          if (step.txHash) {
+            setTxHash(step.txHash);
+          }
+        },
+        onStatusChange: (status: TransactionStatusPayload) => {
+          console.log('Status update:', status);
+        },
+      });
+
+      setExecutionResult(result);
+
+      if (result.status === 'completed') {
+        // Reset form on success
+        setAmount('');
+        refetchBalance();
+      }
+    } catch (error) {
+      console.error('Execution failed:', error);
+      setExecutionResult({
+        executionId: 'error',
+        status: 'failed',
+        steps: [],
+        error: error instanceof Error ? error : new Error('Unknown error'),
+      });
+    } finally {
+      setIsExecuting(false);
+    }
+  }, [mina, quote, signer, refetchBalance]);
+
+  // Reset when chain changes
+  const handleChainChange = useCallback((chain: Chain) => {
+    setSourceChain(chain);
+    setSourceToken(null);
+    setAmount('');
+    setExecutionResult(null);
+    setTxHash(null);
+  }, []);
+
+  // Validation
+  const hasInsufficientBalance = useMemo(() => {
+    if (!rawBalance || !amountInSmallestUnit) return false;
+    return BigInt(amountInSmallestUnit) > BigInt(rawBalance);
+  }, [rawBalance, amountInSmallestUnit]);
+
+  const canExecute = useMemo(() => {
+    return (
+      isConnected &&
+      quote &&
+      !isQuoteLoading &&
+      !hasInsufficientBalance &&
+      !isExecuting &&
+      signer
+    );
+  }, [isConnected, quote, isQuoteLoading, hasInsufficientBalance, isExecuting, signer]);
+
+  if (!isReady) {
+    return <div className="bridge-widget loading">Initializing SDK...</div>;
+  }
+
+  return (
+    <div className="bridge-widget">
+      <div className="widget-header">
+        <h2>Bridge to Hyperliquid</h2>
+        <SlippageSelector value={slippage} onChange={setSlippage} />
+      </div>
+
+      {/* Source Chain Selection */}
+      <div className="form-section">
+        <label>From Chain</label>
+        <ChainSelector
+          selectedChainId={sourceChain?.id ?? null}
+          onSelect={handleChainChange}
+        />
+      </div>
+
+      {/* Source Token Selection */}
+      <div className="form-section">
+        <label>Token</label>
+        <TokenSelector
+          chainId={sourceChain?.id ?? null}
+          walletAddress={address ?? null}
+          selectedToken={sourceToken}
+          onSelect={setSourceToken}
+        />
+      </div>
+
+      {/* Amount Input */}
+      <div className="form-section">
+        <div className="amount-header">
+          <label>Amount</label>
+          {formattedBalance && (
+            <span className="balance">
+              Balance: {formattedBalance} {sourceToken?.symbol}
+              <button onClick={handleMaxClick} className="max-button">
+                MAX
+              </button>
+            </span>
+          )}
+        </div>
+        <input
+          type="number"
+          placeholder="0.00"
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+          disabled={!sourceToken}
+          className={hasInsufficientBalance ? 'error' : ''}
+        />
+        {hasInsufficientBalance && (
+          <span className="error-text">Insufficient balance</span>
+        )}
+      </div>
+
+      {/* Destination Display */}
+      <div className="destination-section">
+        <div className="destination-chain">
+          <span className="label">To</span>
+          <div className="chain-display">
+            <span className="chain-name">HyperEVM</span>
+            <span className="token-name">USDC</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Quote Display */}
+      {(isQuoteLoading || quote || quoteError) && (
+        <QuoteSection
+          quote={quote}
+          isLoading={isQuoteLoading}
+          error={quoteError}
+          onRefresh={refetchQuote}
+        />
+      )}
+
+      {/* Execution Status */}
+      {(isExecuting || executionResult || currentStep) && (
+        <ExecutionStatus
+          isExecuting={isExecuting}
+          currentStep={currentStep}
+          result={executionResult}
+          txStatus={txStatus}
+        />
+      )}
+
+      {/* Execute Button */}
+      <button
+        className="execute-button"
+        onClick={handleExecute}
+        disabled={!canExecute}
+      >
+        {!isConnected
+          ? 'Connect Wallet'
+          : isExecuting
+          ? 'Bridging...'
+          : hasInsufficientBalance
+          ? 'Insufficient Balance'
+          : !quote
+          ? 'Enter Amount'
+          : 'Bridge'}
+      </button>
+    </div>
+  );
+}
+```
+
+```tsx ChainSelector.tsx
+import { useState, useEffect } from 'react';
+import { useMina } from '@siphoyawe/mina-sdk/react';
+import type { Chain } from '@siphoyawe/mina-sdk/react';
+
+interface ChainSelectorProps {
+  selectedChainId: number | null;
+  onSelect: (chain: Chain) => void;
+}
+
+export function ChainSelector({ selectedChainId, onSelect }: ChainSelectorProps) {
+  const { mina, isReady } = useMina();
+  const [chains, setChains] = useState<Chain[]>([]);
+  const [isOpen, setIsOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    if (!mina || !isReady) return;
+
+    setIsLoading(true);
+    mina.getChainsByRoutes()
+      .then(setChains)
+      .catch(console.error)
+      .finally(() => setIsLoading(false));
+  }, [mina, isReady]);
+
+  const selectedChain = chains.find((c) => c.id === selectedChainId);
+
+  return (
+    <div className="selector chain-selector">
+      <button
+        className="selector-trigger"
+        onClick={() => setIsOpen(!isOpen)}
+        disabled={isLoading}
+      >
+        {selectedChain ? (
+          <>
+            <img src={selectedChain.logoUrl} alt="" className="logo" />
+            <span>{selectedChain.name}</span>
+          </>
+        ) : (
+          <span>{isLoading ? 'Loading...' : 'Select chain'}</span>
+        )}
+      </button>
+
+      {isOpen && (
+        <div className="selector-dropdown">
+          {chains.map((chain) => (
+            <button
+              key={chain.id}
+              className={`option ${chain.id === selectedChainId ? 'selected' : ''}`}
+              onClick={() => {
+                onSelect(chain);
+                setIsOpen(false);
+              }}
+            >
+              <img src={chain.logoUrl} alt="" className="logo" />
+              <span>{chain.name}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+```tsx TokenSelector.tsx
+import { useState, useEffect, useMemo } from 'react';
+import { useMina } from '@siphoyawe/mina-sdk/react';
+import type { Token } from '@siphoyawe/mina-sdk/react';
+
+interface TokenSelectorProps {
+  chainId: number | null;
+  walletAddress: string | null;
+  selectedToken: Token | null;
+  onSelect: (token: Token) => void;
+}
+
+export function TokenSelector({
+  chainId,
+  walletAddress,
+  selectedToken,
+  onSelect,
+}: TokenSelectorProps) {
+  const { mina, isReady } = useMina();
+  const [tokens, setTokens] = useState<Token[]>([]);
+  const [balances, setBalances] = useState<Record<string, string>>({});
+  const [isOpen, setIsOpen] = useState(false);
+  const [search, setSearch] = useState('');
+
+  // Fetch tokens
+  useEffect(() => {
+    if (!mina || !isReady || !chainId) {
+      setTokens([]);
+      return;
+    }
+
+    mina.getBridgeableTokens(chainId)
+      .then(setTokens)
+      .catch(console.error);
+  }, [mina, isReady, chainId]);
+
+  // Fetch balances
+  useEffect(() => {
+    if (!mina || !chainId || !walletAddress || tokens.length === 0) return;
+
+    const fetchBalances = async () => {
+      const results: Record<string, string> = {};
+      for (const token of tokens.slice(0, 20)) { // Limit to first 20
+        try {
+          const balance = await mina.getBalance(chainId, token.address, walletAddress);
+          results[token.address] = balance.formatted;
+        } catch {}
+      }
+      setBalances(results);
+    };
+
+    fetchBalances();
+  }, [mina, chainId, walletAddress, tokens]);
+
+  const filteredTokens = useMemo(() => {
+    if (!search) return tokens;
+    const query = search.toLowerCase();
+    return tokens.filter(
+      (t) => t.symbol.toLowerCase().includes(query) || t.name.toLowerCase().includes(query)
+    );
+  }, [tokens, search]);
+
+  if (!chainId) {
+    return (
+      <div className="selector disabled">
+        <span>Select a chain first</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="selector token-selector">
+      <button className="selector-trigger" onClick={() => setIsOpen(!isOpen)}>
+        {selectedToken ? (
+          <>
+            <img src={selectedToken.logoUrl} alt="" className="logo" />
+            <div className="token-info">
+              <span className="symbol">{selectedToken.symbol}</span>
+              {balances[selectedToken.address] && (
+                <span className="balance">{balances[selectedToken.address]}</span>
+              )}
+            </div>
+          </>
+        ) : (
+          <span>Select token</span>
+        )}
+      </button>
+
+      {isOpen && (
+        <div className="selector-dropdown">
+          <input
+            type="text"
+            placeholder="Search tokens..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="search-input"
+          />
+          <div className="options-list">
+            {filteredTokens.map((token) => (
+              <button
+                key={token.address}
+                className={`option ${token.address === selectedToken?.address ? 'selected' : ''}`}
+                onClick={() => {
+                  onSelect(token);
+                  setIsOpen(false);
+                  setSearch('');
+                }}
+              >
+                <img src={token.logoUrl} alt="" className="logo" />
+                <div className="token-details">
+                  <span className="symbol">{token.symbol}</span>
+                  <span className="name">{token.name}</span>
+                </div>
+                {balances[token.address] && (
+                  <span className="balance">{balances[token.address]}</span>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+```tsx QuoteSection.tsx
+import type { Quote } from '@siphoyawe/mina-sdk/react';
+
+interface QuoteSectionProps {
+  quote: Quote | null;
+  isLoading: boolean;
+  error: Error | null;
+  onRefresh: () => void;
+}
+
+export function QuoteSection({ quote, isLoading, error, onRefresh }: QuoteSectionProps) {
+  if (isLoading) {
+    return (
+      <div className="quote-section loading">
+        <div className="spinner" />
+        <span>Finding best route...</span>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="quote-section error">
+        <span>{error.message}</span>
+        <button onClick={onRefresh}>Retry</button>
+      </div>
+    );
+  }
+
+  if (!quote) return null;
+
+  const outputFormatted = (
+    parseFloat(quote.toAmount) / Math.pow(10, quote.toToken.decimals)
+  ).toFixed(2);
+
+  return (
+    <div className="quote-section">
+      <div className="quote-row">
+        <span className="label">You receive</span>
+        <span className="value">{outputFormatted} {quote.toToken.symbol}</span>
+      </div>
+
+      <div className="quote-row">
+        <span className="label">Minimum received</span>
+        <span className="value">{quote.minimumReceivedFormatted}</span>
+      </div>
+
+      <div className="quote-row">
+        <span className="label">Estimated time</span>
+        <span className="value">{formatTime(quote.estimatedTime)}</span>
+      </div>
+
+      <div className="quote-row">
+        <span className="label">Total fees</span>
+        <span className="value">${quote.fees.totalUsd.toFixed(2)}</span>
+      </div>
+
+      {quote.highImpact && (
+        <div className="warning">
+          High price impact: {(quote.priceImpact * 100).toFixed(2)}%
+        </div>
+      )}
+
+      {quote.includesAutoDeposit && (
+        <div className="badge success">Auto-deposit to L1</div>
+      )}
+    </div>
+  );
+}
+
+function formatTime(seconds: number): string {
+  if (seconds < 60) return `~${seconds}s`;
+  return `~${Math.ceil(seconds / 60)} min`;
+}
+```
+
+```tsx ExecutionStatus.tsx
+import type {
+  ExecutionResult,
+  TransactionStatus,
+  StepStatusPayload,
+} from '@siphoyawe/mina-sdk/react';
+
+interface ExecutionStatusProps {
+  isExecuting: boolean;
+  currentStep: StepStatusPayload | null;
+  result: ExecutionResult | null;
+  txStatus: TransactionStatus | null;
+}
+
+export function ExecutionStatus({
+  isExecuting,
+  currentStep,
+  result,
+  txStatus,
+}: ExecutionStatusProps) {
+  if (result?.status === 'completed') {
+    return (
+      <div className="execution-status success">
+        <div className="icon">OK</div>
+        <div className="content">
+          <h4>Bridge Successful!</h4>
+          {result.txHash && (
+            <a
+              href={`https://hyperevmscan.io/tx/${result.txHash}`}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              View Transaction
+            </a>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (result?.status === 'failed') {
+    return (
+      <div className="execution-status error">
+        <div className="icon">X</div>
+        <div className="content">
+          <h4>Bridge Failed</h4>
+          <p>{result.error?.message ?? 'Unknown error'}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (isExecuting && currentStep) {
+    return (
+      <div className="execution-status pending">
+        <div className="spinner" />
+        <div className="content">
+          <h4>{getStepLabel(currentStep.step)}</h4>
+          <p>{getStepDescription(currentStep)}</p>
+          {currentStep.txHash && (
+            <a
+              href={getExplorerUrl(currentStep.txHash)}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              View Transaction
+            </a>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return null;
+}
+
+function getStepLabel(step: string): string {
+  const labels: Record<string, string> = {
+    approval: 'Approving Token',
+    swap: 'Swapping Tokens',
+    bridge: 'Bridging to HyperEVM',
+    deposit: 'Depositing to L1',
+  };
+  return labels[step] ?? step;
+}
+
+function getStepDescription(step: StepStatusPayload): string {
+  if (step.status === 'pending') return 'Waiting...';
+  if (step.status === 'active') return 'Processing...';
+  if (step.status === 'completed') return 'Complete';
+  if (step.status === 'failed') return step.error?.message ?? 'Failed';
+  return '';
+}
+
+function getExplorerUrl(txHash: string): string {
+  return `https://arbiscan.io/tx/${txHash}`;
+}
+```
+
+```tsx SlippageSelector.tsx
+interface SlippageSelectorProps {
+  value: number;
+  onChange: (value: number) => void;
+}
+
+const PRESETS = [0.1, 0.5, 1.0];
+
+export function SlippageSelector({ value, onChange }: SlippageSelectorProps) {
+  return (
+    <div className="slippage-selector">
+      <span className="label">Slippage</span>
+      <div className="presets">
+        {PRESETS.map((preset) => (
+          <button
+            key={preset}
+            className={`preset ${value === preset ? 'active' : ''}`}
+            onClick={() => onChange(preset)}
+          >
+            {preset}%
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+```
+</CodeGroup>
+
+## Styling
+
+```css BridgeWidget.css
+.bridge-widget {
+  max-width: 440px;
+  margin: 0 auto;
+  padding: 24px;
+  background: #0d0d1a;
+  border: 1px solid #2d2d44;
+  border-radius: 20px;
+  color: #ffffff;
+}
+
+.widget-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+.widget-header h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.form-section {
+  margin-bottom: 16px;
+}
+
+.form-section label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 14px;
+  color: #888;
+}
+
+.amount-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.amount-header .balance {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #888;
+}
+
+.max-button {
+  padding: 2px 8px;
+  background: #7dd3fc;
+  border: none;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #0d0d1a;
+  cursor: pointer;
+}
+
+input[type="number"] {
+  width: 100%;
+  padding: 16px;
+  background: #1a1a2e;
+  border: 1px solid #2d2d44;
+  border-radius: 12px;
+  font-size: 24px;
+  color: #ffffff;
+}
+
+input[type="number"]:focus {
+  outline: none;
+  border-color: #7dd3fc;
+}
+
+input[type="number"].error {
+  border-color: #ef4444;
+}
+
+.error-text {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: #ef4444;
+}
+
+.selector {
+  position: relative;
+}
+
+.selector-trigger {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 16px;
+  background: #1a1a2e;
+  border: 1px solid #2d2d44;
+  border-radius: 12px;
+  color: #ffffff;
+  cursor: pointer;
+  text-align: left;
+}
+
+.selector-trigger .logo {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+}
+
+.selector-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 4px;
+  background: #1a1a2e;
+  border: 1px solid #2d2d44;
+  border-radius: 12px;
+  max-height: 300px;
+  overflow-y: auto;
+  z-index: 100;
+}
+
+.search-input {
+  width: calc(100% - 24px);
+  margin: 12px;
+  padding: 10px 12px;
+  background: #0d0d1a;
+  border: 1px solid #2d2d44;
+  border-radius: 8px;
+  color: #ffffff;
+}
+
+.option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 16px;
+  background: transparent;
+  border: none;
+  color: #ffffff;
+  cursor: pointer;
+  text-align: left;
+}
+
+.option:hover {
+  background: #2d2d44;
+}
+
+.option.selected {
+  background: rgba(125, 211, 252, 0.2);
+}
+
+.destination-section {
+  padding: 16px;
+  background: #1a1a2e;
+  border-radius: 12px;
+  margin-bottom: 16px;
+}
+
+.quote-section {
+  padding: 16px;
+  background: #1a1a2e;
+  border-radius: 12px;
+  margin-bottom: 16px;
+}
+
+.quote-section.loading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.quote-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid #2d2d44;
+}
+
+.quote-row:last-child {
+  border-bottom: none;
+}
+
+.quote-row .label {
+  color: #888;
+}
+
+.warning {
+  margin-top: 12px;
+  padding: 12px;
+  background: rgba(239, 68, 68, 0.1);
+  border-radius: 8px;
+  color: #ef4444;
+  font-size: 12px;
+}
+
+.badge {
+  display: inline-block;
+  margin-top: 12px;
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+}
+
+.badge.success {
+  background: rgba(34, 197, 94, 0.1);
+  color: #22c55e;
+}
+
+.execution-status {
+  display: flex;
+  gap: 16px;
+  padding: 16px;
+  border-radius: 12px;
+  margin-bottom: 16px;
+}
+
+.execution-status.success {
+  background: rgba(34, 197, 94, 0.1);
+}
+
+.execution-status.error {
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.execution-status.pending {
+  background: rgba(125, 211, 252, 0.1);
+}
+
+.execute-button {
+  width: 100%;
+  padding: 16px;
+  background: #7dd3fc;
+  border: none;
+  border-radius: 12px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #0d0d1a;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.execute-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.execute-button:not(:disabled):hover {
+  opacity: 0.9;
+}
+
+.spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid #2d2d44;
+  border-top-color: #7dd3fc;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.slippage-selector {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.slippage-selector .label {
+  font-size: 12px;
+  color: #888;
+}
+
+.slippage-selector .presets {
+  display: flex;
+  gap: 4px;
+}
+
+.slippage-selector .preset {
+  padding: 4px 8px;
+  background: #1a1a2e;
+  border: 1px solid #2d2d44;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #888;
+  cursor: pointer;
+}
+
+.slippage-selector .preset.active {
+  background: #7dd3fc;
+  border-color: #7dd3fc;
+  color: #0d0d1a;
+}
+```
+
+## Integration with Wagmi
+
+The widget uses wagmi for wallet connection. Wrap your app:
+
+```tsx App.tsx
+import { WagmiProvider, createConfig, http } from 'wagmi';
+import { arbitrum, optimism, base, mainnet } from 'wagmi/chains';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { BridgeWidget } from './BridgeWidget';
+
+const config = createConfig({
+  chains: [mainnet, arbitrum, optimism, base],
+  transports: {
+    [mainnet.id]: http(),
+    [arbitrum.id]: http(),
+    [optimism.id]: http(),
+    [base.id]: http(),
+  },
+});
+
+const queryClient = new QueryClient();
+
+export function App() {
+  return (
+    <WagmiProvider config={config}>
+      <QueryClientProvider client={queryClient}>
+        <BridgeWidget />
+      </QueryClientProvider>
+    </WagmiProvider>
+  );
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Error Handling" icon="shield" href="/examples/error-handling">
+    Handle all error scenarios
+  </Card>
+  <Card title="Event Tracking" icon="bell" href="/examples/event-tracking">
+    Real-time status updates
+  </Card>
+</CardGroup>

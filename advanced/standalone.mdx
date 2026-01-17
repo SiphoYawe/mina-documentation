@@ -1,0 +1,427 @@
+---
+title: "Standalone Functions"
+description: "Use SDK service functions directly without the Mina client"
+---
+
+# Standalone Functions
+
+The Mina SDK exports all service functions as standalone imports. This allows you to use specific functionality without instantiating the full `Mina` client, which is useful for server-side code, custom caching strategies, or microservice architectures.
+
+## When to Use Standalone Functions
+
+<CardGroup cols={2}>
+  <Card title="Server-Side Code" icon="server">
+    For API routes or serverless functions that only need specific features like fetching chains or tokens.
+  </Card>
+  <Card title="Custom Caching" icon="database">
+    When you need to implement your own caching layer or integrate with an external cache like Redis.
+  </Card>
+  <Card title="Microservices" icon="cubes">
+    For distributed systems where different services handle different parts of the bridge flow.
+  </Card>
+  <Card title="Tree Shaking" icon="leaf">
+    To minimize bundle size by importing only the functions you need.
+  </Card>
+</CardGroup>
+
+## Available Functions
+
+### Chain Functions
+
+```typescript
+import {
+  getChains,
+  getDestinationChains,
+  getChainsByRoutes,
+  getChainById,
+  invalidateChainCache,
+  createChainCache,
+  ChainCache,
+  HYPEREVM_CHAIN,
+} from '@siphoyawe/mina-sdk';
+```
+
+### Token Functions
+
+```typescript
+import {
+  getTokens,
+  getBridgeableTokens,
+  getDestinationTokens,
+  getTokenByAddress,
+  invalidateTokenCache,
+  createTokenCache,
+  TokenCache,
+  HYPEREVM_DESTINATION_TOKENS,
+} from '@siphoyawe/mina-sdk';
+```
+
+### Balance Functions
+
+```typescript
+import {
+  getBalance,
+  getBalanceWithMetadata,
+  getBalances,
+  getChainBalances,
+  validateBalance,
+  checkBalance,
+  invalidateBalanceCache,
+  createBalanceCache,
+  BalanceCache,
+} from '@siphoyawe/mina-sdk';
+```
+
+### Quote Functions
+
+```typescript
+import {
+  getQuote,
+  getQuotes,
+  estimatePriceImpact,
+  invalidateQuoteCache,
+  createQuoteCache,
+  QuoteCache,
+} from '@siphoyawe/mina-sdk';
+```
+
+### Execute Functions
+
+```typescript
+import {
+  execute,
+  validateQuote,
+} from '@siphoyawe/mina-sdk';
+```
+
+## Usage Examples
+
+### Fetching Chains
+
+```typescript
+import { getChains, getDestinationChains, getChainById } from '@siphoyawe/mina-sdk';
+
+// Get all supported source chains
+const { chains, isStale, cachedAt } = await getChains();
+console.log(`Found ${chains.length} chains`);
+
+// Get destination chains (HyperEVM)
+const destinations = getDestinationChains();
+console.log(destinations[0].name); // "HyperEVM"
+
+// Get a specific chain by ID
+const ethereum = await getChainById(1);
+console.log(ethereum?.name); // "Ethereum"
+```
+
+### Fetching Tokens
+
+```typescript
+import { getTokens, getBridgeableTokens, getTokenByAddress } from '@siphoyawe/mina-sdk';
+
+// Get all tokens on Ethereum
+const { tokens } = await getTokens(1);
+console.log(`Found ${tokens.length} tokens on Ethereum`);
+
+// Get only tokens that can bridge to HyperEVM
+const { tokens: bridgeable } = await getBridgeableTokens(1);
+console.log(`${bridgeable.length} tokens can bridge to HyperEVM`);
+
+// Get a specific token
+const usdc = await getTokenByAddress(1, '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48');
+console.log(usdc?.symbol); // "USDC"
+```
+
+### Fetching Balances
+
+```typescript
+import { getBalance, getBalances, checkBalance } from '@siphoyawe/mina-sdk';
+
+// Get a single balance
+const balance = await getBalance({
+  address: '0x742d35Cc6634C0532925a3b844Bc9e7595f...',
+  chainId: 1,
+  tokenAddress: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+});
+console.log(`Balance: ${balance.formatted} ${balance.token.symbol}`);
+
+// Get balances across multiple chains
+const response = await getBalances({
+  address: '0x742d35Cc...',
+  chainIds: [1, 42161, 10],
+});
+console.log(`Total USD: $${response.totalUsd.toFixed(2)}`);
+
+// Quick balance check
+const check = await checkBalance(
+  1,                                           // Chain ID
+  '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', // Token
+  '0x742d35Cc...',                              // Wallet
+  '1000000000'                                  // Amount (1000 USDC)
+);
+
+if (!check.sufficient) {
+  console.log(`Need ${check.shortfall} more`);
+}
+```
+
+### Fetching Quotes
+
+```typescript
+import { getQuote, getQuotes, estimatePriceImpact } from '@siphoyawe/mina-sdk';
+
+// Get a single optimal quote
+const quote = await getQuote(
+  {
+    fromChainId: 1,
+    toChainId: 999,
+    fromToken: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+    toToken: '0xb88339cb7199b77e23db6e890353e22632ba630f',
+    fromAmount: '1000000000', // 1000 USDC
+    fromAddress: '0x742d35Cc...',
+    slippageTolerance: 0.5, // 0.5%
+    routePreference: 'recommended',
+  },
+  true // autoDeposit
+);
+
+console.log(`Receive: ${quote.toAmount}`);
+console.log(`Fees: $${quote.fees.totalUsd}`);
+
+// Get multiple quotes for comparison
+const { quotes, recommendedIndex } = await getQuotes(
+  {
+    fromChainId: 1,
+    toChainId: 999,
+    fromToken: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+    toToken: '0xb88339cb7199b77e23db6e890353e22632ba630f',
+    fromAmount: '1000000000',
+    fromAddress: '0x742d35Cc...',
+  },
+  true // autoDeposit
+);
+
+console.log(`Found ${quotes.length} routes`);
+console.log(`Recommended: ${quotes[recommendedIndex].steps[0].tool}`);
+```
+
+## Using Custom Cache Instances
+
+Standalone functions use a shared default cache. For isolation, pass your own cache instances:
+
+```typescript
+import {
+  createChainCache,
+  createTokenCache,
+  createBalanceCache,
+  createQuoteCache,
+  getChains,
+  getTokens,
+  getBalance,
+  getQuote,
+} from '@siphoyawe/mina-sdk';
+
+// Create isolated caches
+const chainCache = createChainCache();
+const tokenCache = createTokenCache();
+const balanceCache = createBalanceCache();
+const quoteCache = createQuoteCache();
+
+// Pass caches to functions
+const chains = await getChains(chainCache);
+const tokens = await getTokens(1, tokenCache);
+const balance = await getBalance(params, balanceCache);
+const quote = await getQuote(quoteParams, true, quoteCache);
+```
+
+## Server-Side API Route Example
+
+<Tabs>
+  <Tab title="Next.js API Route">
+    ```typescript
+    // app/api/chains/route.ts
+    import { getChains } from '@siphoyawe/mina-sdk';
+    import { NextResponse } from 'next/server';
+
+    export async function GET() {
+      try {
+        const { chains, isStale } = await getChains();
+
+        return NextResponse.json({
+          chains,
+          isStale,
+          count: chains.length,
+        });
+      } catch (error) {
+        return NextResponse.json(
+          { error: 'Failed to fetch chains' },
+          { status: 500 }
+        );
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="Express">
+    ```typescript
+    // routes/chains.ts
+    import { getChains, getChainsByRoutes } from '@siphoyawe/mina-sdk';
+    import { Router } from 'express';
+
+    const router = Router();
+
+    router.get('/chains', async (req, res) => {
+      try {
+        const { chains } = await getChains();
+        res.json({ chains });
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch chains' });
+      }
+    });
+
+    router.get('/chains/bridgeable', async (req, res) => {
+      try {
+        const chains = await getChainsByRoutes(999); // To HyperEVM
+        res.json({ chains });
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch bridgeable chains' });
+      }
+    });
+
+    export default router;
+    ```
+  </Tab>
+</Tabs>
+
+## Microservice Architecture Example
+
+```typescript
+// quote-service.ts
+import {
+  getQuote,
+  createQuoteCache,
+  createChainCache,
+  QuoteCache,
+  ChainCache,
+} from '@siphoyawe/mina-sdk';
+
+class QuoteService {
+  private quoteCache: QuoteCache;
+  private chainCache: ChainCache;
+
+  constructor() {
+    this.quoteCache = createQuoteCache();
+    this.chainCache = createChainCache();
+  }
+
+  async getOptimalQuote(params: {
+    fromChainId: number;
+    toChainId: number;
+    fromToken: string;
+    toToken: string;
+    fromAmount: string;
+    fromAddress: string;
+  }) {
+    return getQuote(
+      {
+        ...params,
+        slippageTolerance: 0.5,
+        routePreference: 'recommended',
+      },
+      true, // autoDeposit
+      this.quoteCache,
+      30000, // timeout
+      this.chainCache
+    );
+  }
+
+  invalidateCache() {
+    this.quoteCache.invalidate();
+  }
+}
+
+export const quoteService = new QuoteService();
+```
+
+## Function Signatures
+
+### getChains
+
+```typescript
+function getChains(cache?: ChainCache): Promise<ChainsResponse>
+```
+
+Returns all supported source chains with metadata.
+
+### getTokens
+
+```typescript
+function getTokens(chainId: number, cache?: TokenCache): Promise<TokensResponse>
+```
+
+Returns all available tokens for a specific chain.
+
+### getBalance
+
+```typescript
+function getBalance(
+  params: BalanceParams,
+  cache?: BalanceCache
+): Promise<BalanceWithMetadata>
+```
+
+Returns token balance with metadata.
+
+### getQuote
+
+```typescript
+function getQuote(
+  params: QuoteParams,
+  autoDeposit?: boolean,
+  cache?: QuoteCache,
+  timeoutMs?: number,
+  chainCache?: ChainCache
+): Promise<Quote>
+```
+
+Returns optimal bridge quote.
+
+### execute
+
+```typescript
+function execute(config: ExecuteConfig): Promise<ExecutionResult>
+```
+
+Executes a bridge transaction.
+
+<Note>
+The `execute` function requires the full `ExecuteConfig` including the emitter for events. For most use cases, the `Mina` client's `execute` method is simpler to use.
+</Note>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Cache Management" icon="database">
+    Create cache instances at the service/module level, not per-request, to benefit from caching.
+  </Card>
+  <Card title="Error Handling" icon="triangle-exclamation">
+    Standalone functions throw the same typed errors as the client. Handle them appropriately.
+  </Card>
+  <Card title="Type Imports" icon="code">
+    Import types separately for cleaner code: `import type { Chain, Token } from '@siphoyawe/mina-sdk'`
+  </Card>
+  <Card title="Bundle Size" icon="weight-scale">
+    Import only what you need to minimize bundle size in browser environments.
+  </Card>
+</CardGroup>
+
+## Comparison: Client vs Standalone
+
+| Feature | Mina Client | Standalone Functions |
+|---------|-------------|---------------------|
+| Caching | Automatic, isolated per instance | Shared default or custom |
+| Events | Built-in emitter | Manual setup required |
+| Configuration | Centralized config | Pass to each function |
+| Bundle Size | Full SDK | Tree-shakeable |
+| Use Case | Client apps, full features | Server-side, microservices |
+
+Choose the `Mina` client for frontend applications and full-featured integrations. Use standalone functions for server-side code, microservices, or when you need fine-grained control over caching and configuration.

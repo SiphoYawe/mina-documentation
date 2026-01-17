@@ -1,80 +1,362 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: "Quick Start"
+description: "Bridge your first transaction in 5 minutes"
 ---
 
-## Get started in three steps
+# Quick Start
 
-Get your documentation site running locally and make your first customization.
+This guide walks you through bridging assets from any supported chain to Hyperliquid using the Mina SDK. By the end, you will have executed a complete cross-chain bridge with automatic deposit to your trading account.
 
-### Step 1: Set up your local environment
+## Prerequisites
+
+Before you begin, ensure you have:
 
 <AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
+  <Accordion title="SDK Installed">
+    Install the Mina SDK and its peer dependency:
+    ```bash
+    npm install @siphoyawe/mina-sdk viem
+    ```
   </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
+  <Accordion title="Wallet with Funds">
+    - An EVM wallet with tokens you want to bridge
+    - Sufficient native token (ETH, MATIC, etc.) for gas fees
+  </Accordion>
+  <Accordion title="TypeScript Setup (Recommended)">
+    The SDK is written in TypeScript and provides full type definitions. While not required, TypeScript is recommended for the best development experience.
   </Accordion>
 </AccordionGroup>
 
-### Step 2: Deploy your changes
+---
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+## Step 1: Initialize the SDK
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+Create a new Mina instance with your configuration. The `integrator` field is required and identifies your application.
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+```typescript
+import { Mina } from '@siphoyawe/mina-sdk';
 
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
-
-<CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
-</CardGroup>
+// Initialize the SDK
+const mina = new Mina({
+  integrator: 'my-app',      // Your app identifier
+  autoDeposit: true,          // Auto-deposit to Hyperliquid L1
+  defaultSlippage: 0.005      // 0.5% slippage tolerance
+});
+```
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+The `autoDeposit` option ensures bridged USDC is automatically deposited to your Hyperliquid L1 trading account. Set to `false` if you want USDC to remain on HyperEVM.
 </Note>
+
+---
+
+## Step 2: Discover Chains
+
+Fetch the list of supported source chains. The SDK supports 40+ chains that can bridge to HyperEVM.
+
+```typescript
+// Get all supported chains
+const { chains } = await mina.getChains();
+
+console.log(`Found ${chains.length} supported chains`);
+
+// Find a specific chain (e.g., Arbitrum)
+const arbitrum = chains.find(chain => chain.id === 42161);
+console.log(`Arbitrum: ${arbitrum?.name}`);
+```
+
+**Example Response:**
+
+```typescript
+{
+  chains: [
+    { id: 1, name: 'Ethereum', nativeToken: { symbol: 'ETH', ... } },
+    { id: 42161, name: 'Arbitrum', nativeToken: { symbol: 'ETH', ... } },
+    { id: 10, name: 'Optimism', nativeToken: { symbol: 'ETH', ... } },
+    // ... 40+ more chains
+  ]
+}
+```
+
+---
+
+## Step 3: Get Tokens
+
+Fetch the tokens available for bridging on your source chain.
+
+```typescript
+// Get tokens available on Arbitrum (chain ID: 42161)
+const { tokens } = await mina.getTokens(42161);
+
+console.log(`Found ${tokens.length} bridgeable tokens on Arbitrum`);
+
+// Find USDC on Arbitrum
+const usdc = tokens.find(token => token.symbol === 'USDC');
+console.log(`USDC address: ${usdc?.address}`);
+```
+
+<Tip>
+Common token addresses on Arbitrum:
+- USDC: `0xaf88d065e77c8cC2239327C5EDb3A432268e5831`
+- USDC.e (Bridged): `0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8`
+</Tip>
+
+---
+
+## Step 4: Get a Quote
+
+Request a bridge quote specifying the source chain, tokens, and amount.
+
+```typescript
+// Get a quote to bridge 100 USDC from Arbitrum to HyperEVM
+const quote = await mina.getQuote({
+  fromChain: 42161,                                          // Arbitrum
+  toChain: 999,                                              // HyperEVM
+  fromToken: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',   // USDC on Arbitrum
+  toToken: '0x0000000000000000000000000000000000000000',     // Native representation
+  amount: '100000000',                                       // 100 USDC (6 decimals)
+  fromAddress: '0xYourWalletAddress'                         // Your wallet address
+});
+
+console.log('Quote received:');
+console.log(`  From: ${quote.fromAmount} ${quote.fromToken.symbol}`);
+console.log(`  To: ${quote.toAmount} ${quote.toToken.symbol}`);
+console.log(`  Estimated time: ${quote.estimatedTime}s`);
+console.log(`  Gas cost: $${quote.gasCostUSD}`);
+```
+
+**Quote Response Structure:**
+
+```typescript
+{
+  id: 'quote_abc123',
+  fromChain: 42161,
+  toChain: 999,
+  fromToken: { symbol: 'USDC', address: '0x...', decimals: 6 },
+  toToken: { symbol: 'USDC', address: '0x...', decimals: 6 },
+  fromAmount: '100000000',
+  toAmount: '99850000',        // Amount after fees
+  estimatedTime: 120,          // Seconds
+  gasCostUSD: '0.45',
+  route: { ... }               // Bridge route details
+}
+```
+
+---
+
+## Step 5: Execute the Bridge
+
+Execute the bridge transaction using a viem wallet client. The SDK handles token approval, bridge execution, and auto-deposit.
+
+```typescript
+import { createWalletClient, custom } from 'viem';
+import { arbitrum } from 'viem/chains';
+
+// Create a wallet client (browser environment with MetaMask)
+const walletClient = createWalletClient({
+  chain: arbitrum,
+  transport: custom(window.ethereum)
+});
+
+// Get the connected account
+const [account] = await walletClient.getAddresses();
+
+// Execute the bridge
+const result = await mina.execute({
+  quote,
+  walletClient,
+  account,
+  onStepChange: (step) => {
+    console.log(`Step: ${step.type} - ${step.status}`);
+  }
+});
+
+console.log('Bridge completed!');
+console.log(`  Transaction hash: ${result.transactionHash}`);
+console.log(`  Deposited to L1: ${result.depositedToL1}`);
+```
+
+<Warning>
+Always ensure the user has sufficient native token balance for gas fees before executing. The SDK will throw an error if gas estimation fails.
+</Warning>
+
+---
+
+## Complete Example
+
+Here is a complete, working example that bridges 100 USDC from Arbitrum to Hyperliquid:
+
+<CodeGroup>
+```typescript bridge.ts
+import { Mina } from '@siphoyawe/mina-sdk';
+import { createWalletClient, custom, parseUnits } from 'viem';
+import { arbitrum } from 'viem/chains';
+
+async function bridgeToHyperliquid() {
+  // 1. Initialize the SDK
+  const mina = new Mina({
+    integrator: 'my-app',
+    autoDeposit: true,
+    defaultSlippage: 0.005
+  });
+
+  // 2. Create wallet client (browser with MetaMask)
+  const walletClient = createWalletClient({
+    chain: arbitrum,
+    transport: custom(window.ethereum)
+  });
+
+  // 3. Get connected account
+  const [account] = await walletClient.getAddresses();
+  console.log(`Connected wallet: ${account}`);
+
+  // 4. Get available tokens on Arbitrum
+  const { tokens } = await mina.getTokens(42161);
+  const usdc = tokens.find(t => t.symbol === 'USDC');
+
+  if (!usdc) {
+    throw new Error('USDC not found on Arbitrum');
+  }
+
+  // 5. Get a quote for 100 USDC
+  const amount = parseUnits('100', 6).toString(); // 100 USDC
+
+  const quote = await mina.getQuote({
+    fromChain: 42161,
+    toChain: 999,
+    fromToken: usdc.address,
+    toToken: '0x0000000000000000000000000000000000000000',
+    amount,
+    fromAddress: account
+  });
+
+  console.log(`Quote: Bridge ${quote.fromAmount} USDC`);
+  console.log(`  Receive: ~${quote.toAmount} USDC`);
+  console.log(`  Est. time: ${quote.estimatedTime}s`);
+
+  // 6. Execute the bridge
+  const result = await mina.execute({
+    quote,
+    walletClient,
+    account,
+    onStepChange: (step) => {
+      console.log(`[${step.type}] ${step.status}: ${step.message || ''}`);
+    }
+  });
+
+  console.log('Bridge complete!');
+  console.log(`  TX Hash: ${result.transactionHash}`);
+  console.log(`  Deposited to L1: ${result.depositedToL1}`);
+
+  return result;
+}
+
+// Run the bridge
+bridgeToHyperliquid()
+  .then(result => console.log('Success!', result))
+  .catch(error => console.error('Failed:', error));
+```
+
+```typescript bridge-node.ts
+// Node.js version using private key
+import { Mina } from '@siphoyawe/mina-sdk';
+import { createWalletClient, http, parseUnits } from 'viem';
+import { privateKeyToAccount } from 'viem/accounts';
+import { arbitrum } from 'viem/chains';
+
+async function bridgeWithPrivateKey() {
+  // 1. Initialize the SDK
+  const mina = new Mina({
+    integrator: 'my-backend-service',
+    autoDeposit: true
+  });
+
+  // 2. Create account from private key
+  const account = privateKeyToAccount('0xYOUR_PRIVATE_KEY');
+
+  // 3. Create wallet client
+  const walletClient = createWalletClient({
+    account,
+    chain: arbitrum,
+    transport: http('https://arb1.arbitrum.io/rpc')
+  });
+
+  // 4. Get quote and execute
+  const quote = await mina.getQuote({
+    fromChain: 42161,
+    toChain: 999,
+    fromToken: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
+    toToken: '0x0000000000000000000000000000000000000000',
+    amount: parseUnits('100', 6).toString(),
+    fromAddress: account.address
+  });
+
+  const result = await mina.execute({
+    quote,
+    walletClient,
+    account: account.address,
+    onStepChange: (step) => {
+      console.log(`[${step.type}] ${step.status}`);
+    }
+  });
+
+  return result;
+}
+```
+</CodeGroup>
+
+---
+
+## What Happens During Execution
+
+When you call `mina.execute()`, the SDK performs the following steps automatically:
+
+<Steps>
+  <Step title="Validate Quote">
+    Verifies the quote is still valid and has not expired.
+  </Step>
+  <Step title="Check Allowance">
+    Checks if the bridge contract has permission to spend your tokens.
+  </Step>
+  <Step title="Approve Tokens (if needed)">
+    Prompts for token approval if the current allowance is insufficient.
+  </Step>
+  <Step title="Submit Bridge Transaction">
+    Signs and submits the cross-chain bridge transaction.
+  </Step>
+  <Step title="Wait for Confirmation">
+    Waits for the source chain transaction to be confirmed.
+  </Step>
+  <Step title="Monitor Bridge Progress">
+    Tracks the cross-chain message until USDC arrives on HyperEVM.
+  </Step>
+  <Step title="Auto-Deposit (if enabled)">
+    Detects USDC arrival, approves the deposit contract, and deposits to Hyperliquid L1.
+  </Step>
+  <Step title="Confirm L1 Balance">
+    Verifies the deposit is reflected in your Hyperliquid trading account.
+  </Step>
+</Steps>
+
+The `onStepChange` callback keeps you informed of progress throughout this process.
+
+---
+
+## Next Steps
+
+Now that you have completed your first bridge, explore these topics to learn more:
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/configuration">
+    Learn about all configuration options including custom RPCs and slippage settings.
+  </Card>
+  <Card title="React Hooks" icon="react" href="/react/installation">
+    Use the SDK with React hooks for a seamless UI integration.
+  </Card>
+  <Card title="Quote Options" icon="receipt" href="/concepts/quotes">
+    Understand route preferences, slippage, and quote parameters.
+  </Card>
+  <Card title="Error Handling" icon="triangle-exclamation" href="/api/errors">
+    Handle errors gracefully with typed error classes and recovery actions.
+  </Card>
+</CardGroup>

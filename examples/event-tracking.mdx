@@ -1,0 +1,908 @@
+---
+title: "Event Tracking"
+description: "Subscribe to SDK events for real-time status updates and progress tracking"
+---
+
+# Event Tracking
+
+This example demonstrates how to subscribe to SDK events to build real-time UI updates, progress indicators, and transaction link displays.
+
+## Overview
+
+The Mina SDK provides an event system that emits updates throughout the bridge execution process:
+
+- Quote updates
+- Execution started
+- Step changes (approval, swap, bridge, deposit)
+- Transaction sent/confirmed
+- Deposit started/completed
+- Execution completed/failed
+- Overall status changes
+
+## Available Events
+
+| Event | Payload | Description |
+|-------|---------|-------------|
+| `quoteUpdated` | `{ quoteId, timestamp }` | Quote has been refreshed |
+| `executionStarted` | `{ executionId, quoteId, timestamp }` | Bridge execution has begun |
+| `stepChanged` | `StepStatusPayload` | Individual step status changed |
+| `approvalRequired` | `{ tokenAddress, amount, spender }` | Token approval is needed |
+| `transactionSent` | `{ txHash, chainId, stepType }` | Transaction submitted to chain |
+| `transactionConfirmed` | `{ txHash, chainId, stepType }` | Transaction confirmed on chain |
+| `depositStarted` | `{ amount, walletAddress }` | L1 deposit process started |
+| `depositCompleted` | `{ txHash, amount }` | L1 deposit completed |
+| `executionCompleted` | `{ executionId, txHash, receivedAmount }` | Full execution successful |
+| `executionFailed` | `{ executionId, error, step }` | Execution failed at a step |
+| `statusChanged` | `TransactionStatusPayload` | Overall status updated |
+
+## Subscribing to Events
+
+<CodeGroup>
+```typescript TypeScript
+import { Mina, SDK_EVENTS } from '@siphoyawe/mina-sdk';
+import type {
+  StepStatusPayload,
+  TransactionStatusPayload,
+} from '@siphoyawe/mina-sdk';
+
+const mina = new Mina({ integrator: 'my-app' });
+
+// Subscribe to step changes
+mina.on(SDK_EVENTS.STEP_CHANGED, (step: StepStatusPayload) => {
+  console.log(`Step: ${step.step}`);
+  console.log(`Status: ${step.status}`);
+  console.log(`TxHash: ${step.txHash}`);
+});
+
+// Subscribe to overall status changes
+mina.on(SDK_EVENTS.STATUS_CHANGED, (status: TransactionStatusPayload) => {
+  console.log(`Overall status: ${status.status}`);
+  console.log(`Progress: ${status.progress}%`);
+  console.log(`Current step: ${status.currentStep}/${status.totalSteps}`);
+});
+
+// Subscribe to execution completion
+mina.on(SDK_EVENTS.EXECUTION_COMPLETED, (result) => {
+  console.log('Bridge completed!');
+  console.log(`TxHash: ${result.txHash}`);
+  console.log(`Received: ${result.receivedAmount}`);
+});
+
+// Subscribe to execution failure
+mina.on(SDK_EVENTS.EXECUTION_FAILED, (failure) => {
+  console.error(`Bridge failed at step: ${failure.step}`);
+  console.error(`Error: ${failure.error.message}`);
+});
+
+// Subscribe once (auto-unsubscribes after first event)
+mina.once(SDK_EVENTS.TRANSACTION_SENT, (tx) => {
+  console.log(`First transaction sent: ${tx.txHash}`);
+});
+
+// Unsubscribe from events
+const stepHandler = (step: StepStatusPayload) => console.log(step);
+mina.on(SDK_EVENTS.STEP_CHANGED, stepHandler);
+// Later...
+mina.off(SDK_EVENTS.STEP_CHANGED, stepHandler);
+```
+
+```typescript Event Type Definitions
+import { SDK_EVENTS } from '@siphoyawe/mina-sdk';
+
+// All available event names
+const EVENTS = {
+  QUOTE_UPDATED: 'quoteUpdated',
+  EXECUTION_STARTED: 'executionStarted',
+  STEP_CHANGED: 'stepChanged',
+  APPROVAL_REQUIRED: 'approvalRequired',
+  TRANSACTION_SENT: 'transactionSent',
+  TRANSACTION_CONFIRMED: 'transactionConfirmed',
+  DEPOSIT_STARTED: 'depositStarted',
+  DEPOSIT_COMPLETED: 'depositCompleted',
+  EXECUTION_COMPLETED: 'executionCompleted',
+  EXECUTION_FAILED: 'executionFailed',
+  STATUS_CHANGED: 'statusChanged',
+} as const;
+
+// Step status payload
+interface StepStatusPayload {
+  stepId: string;
+  step: 'approval' | 'swap' | 'bridge' | 'deposit';
+  status: 'pending' | 'active' | 'completed' | 'failed';
+  txHash: string | null;
+  error: Error | null;
+  timestamp: number;
+}
+
+// Overall transaction status
+interface TransactionStatusPayload {
+  status: 'pending' | 'in_progress' | 'completed' | 'failed';
+  substatus: string;
+  currentStep: number;
+  totalSteps: number;
+  fromAmount: string;
+  toAmount: string | null;
+  txHash: string;
+  receivingTxHash: string | null;
+  progress: number;
+  estimatedTime: number;
+}
+```
+</CodeGroup>
+
+## React Hook for Event Tracking
+
+<CodeGroup>
+```tsx useBridgeEvents.ts
+import { useEffect, useCallback, useState, useRef } from 'react';
+import { useMina } from '@siphoyawe/mina-sdk/react';
+import { SDK_EVENTS } from '@siphoyawe/mina-sdk';
+import type {
+  StepStatusPayload,
+  TransactionStatusPayload,
+} from '@siphoyawe/mina-sdk';
+
+interface BridgeStep {
+  id: string;
+  type: string;
+  status: 'pending' | 'active' | 'completed' | 'failed';
+  txHash: string | null;
+  error: string | null;
+  timestamp: number;
+}
+
+interface BridgeProgress {
+  status: 'idle' | 'pending' | 'in_progress' | 'completed' | 'failed';
+  progress: number;
+  currentStep: number;
+  totalSteps: number;
+  estimatedTime: number;
+  steps: BridgeStep[];
+  txHash: string | null;
+  receivingTxHash: string | null;
+  error: string | null;
+}
+
+const initialProgress: BridgeProgress = {
+  status: 'idle',
+  progress: 0,
+  currentStep: 0,
+  totalSteps: 0,
+  estimatedTime: 0,
+  steps: [],
+  txHash: null,
+  receivingTxHash: null,
+  error: null,
+};
+
+export function useBridgeEvents() {
+  const { mina, isReady } = useMina();
+  const [progress, setProgress] = useState<BridgeProgress>(initialProgress);
+  const stepsRef = useRef<BridgeStep[]>([]);
+
+  // Reset progress
+  const reset = useCallback(() => {
+    stepsRef.current = [];
+    setProgress(initialProgress);
+  }, []);
+
+  // Event handlers
+  useEffect(() => {
+    if (!mina || !isReady) return;
+
+    // Execution started
+    const handleExecutionStarted = () => {
+      stepsRef.current = [];
+      setProgress({
+        ...initialProgress,
+        status: 'pending',
+      });
+    };
+
+    // Step changed
+    const handleStepChanged = (step: StepStatusPayload) => {
+      const existingIndex = stepsRef.current.findIndex((s) => s.id === step.stepId);
+
+      const newStep: BridgeStep = {
+        id: step.stepId,
+        type: step.step,
+        status: step.status,
+        txHash: step.txHash,
+        error: step.error?.message ?? null,
+        timestamp: step.timestamp,
+      };
+
+      if (existingIndex >= 0) {
+        stepsRef.current[existingIndex] = newStep;
+      } else {
+        stepsRef.current.push(newStep);
+      }
+
+      setProgress((prev) => ({
+        ...prev,
+        steps: [...stepsRef.current],
+      }));
+    };
+
+    // Status changed
+    const handleStatusChanged = (status: TransactionStatusPayload) => {
+      setProgress((prev) => ({
+        ...prev,
+        status: status.status,
+        progress: status.progress,
+        currentStep: status.currentStep,
+        totalSteps: status.totalSteps,
+        estimatedTime: status.estimatedTime,
+        txHash: status.txHash,
+        receivingTxHash: status.receivingTxHash,
+      }));
+    };
+
+    // Transaction sent
+    const handleTransactionSent = (tx: { txHash: string; stepType: string }) => {
+      setProgress((prev) => ({
+        ...prev,
+        txHash: tx.txHash,
+      }));
+    };
+
+    // Execution completed
+    const handleCompleted = (result: { txHash: string; receivedAmount: string | null }) => {
+      setProgress((prev) => ({
+        ...prev,
+        status: 'completed',
+        progress: 100,
+        txHash: result.txHash,
+      }));
+    };
+
+    // Execution failed
+    const handleFailed = (failure: { error: Error; step: string | null }) => {
+      setProgress((prev) => ({
+        ...prev,
+        status: 'failed',
+        error: failure.error.message,
+      }));
+    };
+
+    // Subscribe to events
+    mina.on(SDK_EVENTS.EXECUTION_STARTED, handleExecutionStarted);
+    mina.on(SDK_EVENTS.STEP_CHANGED, handleStepChanged);
+    mina.on(SDK_EVENTS.STATUS_CHANGED, handleStatusChanged);
+    mina.on(SDK_EVENTS.TRANSACTION_SENT, handleTransactionSent);
+    mina.on(SDK_EVENTS.EXECUTION_COMPLETED, handleCompleted);
+    mina.on(SDK_EVENTS.EXECUTION_FAILED, handleFailed);
+
+    // Cleanup on unmount
+    return () => {
+      mina.off(SDK_EVENTS.EXECUTION_STARTED, handleExecutionStarted);
+      mina.off(SDK_EVENTS.STEP_CHANGED, handleStepChanged);
+      mina.off(SDK_EVENTS.STATUS_CHANGED, handleStatusChanged);
+      mina.off(SDK_EVENTS.TRANSACTION_SENT, handleTransactionSent);
+      mina.off(SDK_EVENTS.EXECUTION_COMPLETED, handleCompleted);
+      mina.off(SDK_EVENTS.EXECUTION_FAILED, handleFailed);
+    };
+  }, [mina, isReady]);
+
+  return { progress, reset };
+}
+```
+
+```tsx Usage Example
+import { useBridgeEvents } from './useBridgeEvents';
+import { useMina } from '@siphoyawe/mina-sdk/react';
+
+function BridgeExecutor() {
+  const { mina } = useMina();
+  const { progress, reset } = useBridgeEvents();
+
+  const handleExecute = async () => {
+    reset();
+    // Execute bridge...
+    await mina.execute({ quote, signer });
+  };
+
+  return (
+    <div>
+      <button onClick={handleExecute}>Bridge</button>
+      <ProgressTracker progress={progress} />
+    </div>
+  );
+}
+```
+</CodeGroup>
+
+## Progress Tracker Component
+
+<CodeGroup>
+```tsx ProgressTracker.tsx
+import type { ReactNode } from 'react';
+
+interface BridgeStep {
+  id: string;
+  type: string;
+  status: 'pending' | 'active' | 'completed' | 'failed';
+  txHash: string | null;
+  error: string | null;
+  timestamp: number;
+}
+
+interface BridgeProgress {
+  status: 'idle' | 'pending' | 'in_progress' | 'completed' | 'failed';
+  progress: number;
+  currentStep: number;
+  totalSteps: number;
+  estimatedTime: number;
+  steps: BridgeStep[];
+  txHash: string | null;
+  receivingTxHash: string | null;
+  error: string | null;
+}
+
+interface ProgressTrackerProps {
+  progress: BridgeProgress;
+}
+
+export function ProgressTracker({ progress }: ProgressTrackerProps) {
+  if (progress.status === 'idle') return null;
+
+  return (
+    <div className="progress-tracker">
+      {/* Progress Bar */}
+      <div className="progress-bar-container">
+        <div
+          className={`progress-bar ${progress.status}`}
+          style={{ width: `${progress.progress}%` }}
+        />
+      </div>
+
+      {/* Progress Text */}
+      <div className="progress-info">
+        <span className="progress-percent">{progress.progress}%</span>
+        {progress.estimatedTime > 0 && (
+          <span className="time-remaining">
+            ~{formatTime(progress.estimatedTime)} remaining
+          </span>
+        )}
+      </div>
+
+      {/* Steps Timeline */}
+      <div className="steps-timeline">
+        {progress.steps.map((step, index) => (
+          <StepItem
+            key={step.id}
+            step={step}
+            isLast={index === progress.steps.length - 1}
+          />
+        ))}
+      </div>
+
+      {/* Transaction Links */}
+      {progress.txHash && (
+        <TransactionLinks
+          bridgeTxHash={progress.txHash}
+          receivingTxHash={progress.receivingTxHash}
+        />
+      )}
+
+      {/* Error Display */}
+      {progress.error && (
+        <div className="progress-error">
+          <span className="error-icon">!</span>
+          <span>{progress.error}</span>
+        </div>
+      )}
+
+      {/* Completion Message */}
+      {progress.status === 'completed' && (
+        <div className="completion-message">
+          <span className="success-icon">OK</span>
+          <span>Bridge completed successfully!</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface StepItemProps {
+  step: BridgeStep;
+  isLast: boolean;
+}
+
+function StepItem({ step, isLast }: StepItemProps) {
+  const stepLabels: Record<string, string> = {
+    approval: 'Approve Token',
+    swap: 'Swap Tokens',
+    bridge: 'Bridge to HyperEVM',
+    deposit: 'Deposit to L1',
+  };
+
+  return (
+    <div className={`step-item ${step.status}`}>
+      <div className="step-indicator">
+        <StepIcon status={step.status} />
+        {!isLast && <div className="step-line" />}
+      </div>
+
+      <div className="step-content">
+        <span className="step-label">{stepLabels[step.type] ?? step.type}</span>
+        <span className="step-status">{getStatusText(step.status)}</span>
+
+        {step.txHash && (
+          <a
+            href={getExplorerUrl(step.txHash, step.type)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="step-tx-link"
+          >
+            View transaction
+          </a>
+        )}
+
+        {step.error && (
+          <span className="step-error">{step.error}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function StepIcon({ status }: { status: BridgeStep['status'] }) {
+  switch (status) {
+    case 'completed':
+      return (
+        <div className="step-icon completed">
+          <svg viewBox="0 0 16 16" fill="currentColor">
+            <path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z" />
+          </svg>
+        </div>
+      );
+    case 'active':
+      return (
+        <div className="step-icon active">
+          <div className="spinner" />
+        </div>
+      );
+    case 'failed':
+      return (
+        <div className="step-icon failed">
+          <svg viewBox="0 0 16 16" fill="currentColor">
+            <path d="M4.47 4.47a.75.75 0 011.06 0L8 6.94l2.47-2.47a.75.75 0 111.06 1.06L9.06 8l2.47 2.47a.75.75 0 11-1.06 1.06L8 9.06l-2.47 2.47a.75.75 0 01-1.06-1.06L6.94 8 4.47 5.53a.75.75 0 010-1.06z" />
+          </svg>
+        </div>
+      );
+    default:
+      return <div className="step-icon pending" />;
+  }
+}
+
+interface TransactionLinksProps {
+  bridgeTxHash: string;
+  receivingTxHash: string | null;
+}
+
+function TransactionLinks({ bridgeTxHash, receivingTxHash }: TransactionLinksProps) {
+  return (
+    <div className="transaction-links">
+      <a
+        href={`https://arbiscan.io/tx/${bridgeTxHash}`}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="tx-link"
+      >
+        <span>Source Transaction</span>
+        <ExternalLinkIcon />
+      </a>
+
+      {receivingTxHash && (
+        <a
+          href={`https://hyperevmscan.io/tx/${receivingTxHash}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="tx-link"
+        >
+          <span>Destination Transaction</span>
+          <ExternalLinkIcon />
+        </a>
+      )}
+    </div>
+  );
+}
+
+function ExternalLinkIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+      <path d="M3.5 3a.5.5 0 01.5-.5h5a.5.5 0 01.5.5v5a.5.5 0 01-1 0V4.207L3.854 8.854a.5.5 0 01-.708-.708L7.793 3.5H4a.5.5 0 01-.5-.5z" />
+    </svg>
+  );
+}
+
+function formatTime(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.ceil(seconds / 60)}m`;
+  return `${Math.ceil(seconds / 3600)}h`;
+}
+
+function getStatusText(status: BridgeStep['status']): string {
+  const texts: Record<string, string> = {
+    pending: 'Waiting',
+    active: 'Processing',
+    completed: 'Complete',
+    failed: 'Failed',
+  };
+  return texts[status] ?? status;
+}
+
+function getExplorerUrl(txHash: string, stepType: string): string {
+  // Return appropriate explorer based on step type
+  if (stepType === 'deposit') {
+    return `https://hyperevmscan.io/tx/${txHash}`;
+  }
+  // Default to source chain explorer (e.g., Arbiscan)
+  return `https://arbiscan.io/tx/${txHash}`;
+}
+```
+
+```css ProgressTracker.css
+.progress-tracker {
+  padding: 20px;
+  background: #1a1a2e;
+  border: 1px solid #2d2d44;
+  border-radius: 16px;
+}
+
+/* Progress Bar */
+.progress-bar-container {
+  height: 8px;
+  background: #2d2d44;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+
+.progress-bar {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.progress-bar.pending,
+.progress-bar.in_progress {
+  background: linear-gradient(90deg, #7dd3fc, #93c5fd);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.progress-bar.completed {
+  background: #22c55e;
+}
+
+.progress-bar.failed {
+  background: #ef4444;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+/* Progress Info */
+.progress-info {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  font-size: 14px;
+}
+
+.progress-percent {
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.time-remaining {
+  color: #888;
+}
+
+/* Steps Timeline */
+.steps-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.step-item {
+  display: flex;
+  gap: 12px;
+}
+
+.step-indicator {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.step-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.step-icon.pending {
+  background: #2d2d44;
+  border: 2px solid #3d3d55;
+}
+
+.step-icon.active {
+  background: rgba(125, 211, 252, 0.2);
+  border: 2px solid #7dd3fc;
+}
+
+.step-icon.completed {
+  background: #22c55e;
+  color: white;
+}
+
+.step-icon.completed svg {
+  width: 14px;
+  height: 14px;
+}
+
+.step-icon.failed {
+  background: #ef4444;
+  color: white;
+}
+
+.step-icon.failed svg {
+  width: 14px;
+  height: 14px;
+}
+
+.step-icon .spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(125, 211, 252, 0.3);
+  border-top-color: #7dd3fc;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.step-line {
+  width: 2px;
+  flex: 1;
+  min-height: 24px;
+  background: #2d2d44;
+  margin: 4px 0;
+}
+
+.step-item.completed .step-line {
+  background: #22c55e;
+}
+
+.step-content {
+  flex: 1;
+  padding-bottom: 16px;
+}
+
+.step-label {
+  display: block;
+  font-weight: 500;
+  color: #ffffff;
+  margin-bottom: 2px;
+}
+
+.step-status {
+  display: block;
+  font-size: 12px;
+  color: #888;
+  margin-bottom: 4px;
+}
+
+.step-tx-link {
+  display: inline-block;
+  font-size: 12px;
+  color: #7dd3fc;
+  text-decoration: none;
+}
+
+.step-tx-link:hover {
+  text-decoration: underline;
+}
+
+.step-error {
+  display: block;
+  font-size: 12px;
+  color: #ef4444;
+  margin-top: 4px;
+}
+
+/* Transaction Links */
+.transaction-links {
+  display: flex;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #2d2d44;
+}
+
+.tx-link {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 12px;
+  background: #2d2d44;
+  border-radius: 8px;
+  font-size: 12px;
+  color: #ffffff;
+  text-decoration: none;
+  transition: background 0.2s;
+}
+
+.tx-link:hover {
+  background: #3d3d55;
+}
+
+/* Error and Completion Messages */
+.progress-error,
+.completion-message {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  padding: 12px;
+  border-radius: 8px;
+  font-size: 14px;
+}
+
+.progress-error {
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+}
+
+.completion-message {
+  background: rgba(34, 197, 94, 0.1);
+  color: #22c55e;
+}
+
+.error-icon,
+.success-icon {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  font-size: 12px;
+}
+
+.error-icon {
+  background: #ef4444;
+  color: white;
+}
+
+.success-icon {
+  background: #22c55e;
+  color: white;
+}
+```
+</CodeGroup>
+
+## Cleanup on Unmount
+
+Always clean up event listeners when components unmount to prevent memory leaks:
+
+```tsx CleanupExample.tsx
+import { useEffect } from 'react';
+import { useMina } from '@siphoyawe/mina-sdk/react';
+import { SDK_EVENTS } from '@siphoyawe/mina-sdk';
+
+function BridgeMonitor() {
+  const { mina, isReady } = useMina();
+
+  useEffect(() => {
+    if (!mina || !isReady) return;
+
+    // Define handlers
+    const handleStepChange = (step) => {
+      console.log('Step changed:', step);
+    };
+
+    const handleComplete = (result) => {
+      console.log('Completed:', result);
+    };
+
+    // Subscribe
+    mina.on(SDK_EVENTS.STEP_CHANGED, handleStepChange);
+    mina.on(SDK_EVENTS.EXECUTION_COMPLETED, handleComplete);
+
+    // Cleanup function - IMPORTANT!
+    return () => {
+      mina.off(SDK_EVENTS.STEP_CHANGED, handleStepChange);
+      mina.off(SDK_EVENTS.EXECUTION_COMPLETED, handleComplete);
+    };
+  }, [mina, isReady]);
+
+  return <div>Monitoring bridge events...</div>;
+}
+```
+
+## Using useTransactionStatus Hook
+
+For simpler status tracking, use the built-in hook:
+
+```tsx SimpleStatusTracking.tsx
+import { useState } from 'react';
+import { useMina, useTransactionStatus } from '@siphoyawe/mina-sdk/react';
+
+function SimpleBridgeStatus() {
+  const { mina } = useMina();
+  const [txHash, setTxHash] = useState<string | null>(null);
+
+  // Hook automatically polls for status updates
+  const { status, isLoading, error } = useTransactionStatus(txHash);
+
+  const handleExecute = async () => {
+    const result = await mina.execute({ quote, signer });
+    if (result.txHash) {
+      setTxHash(result.txHash);
+    }
+  };
+
+  return (
+    <div>
+      <button onClick={handleExecute}>Bridge</button>
+
+      {isLoading && <p>Loading status...</p>}
+      {error && <p>Error: {error.message}</p>}
+
+      {status && (
+        <div>
+          <p>Status: {status.status}</p>
+          <p>Steps: {status.steps.length}</p>
+          {status.steps.map((step, i) => (
+            <div key={i}>
+              {step.stepId}: {step.status}
+              {step.txHash && (
+                <a href={`https://arbiscan.io/tx/${step.txHash}`}>
+                  View
+                </a>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+## Best Practices
+
+<Note>
+When working with SDK events:
+
+1. Always unsubscribe from events on component unmount
+2. Use refs to track mutable state in event handlers
+3. Avoid subscribing/unsubscribing on every render
+4. Handle all terminal states (completed, failed)
+5. Show transaction links as soon as available
+6. Provide clear progress feedback to users
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Error Handling" icon="shield" href="/examples/error-handling">
+    Handle execution errors
+  </Card>
+  <Card title="Full Integration" icon="puzzle-piece" href="/examples/full-integration">
+    Complete bridge widget
+  </Card>
+</CardGroup>

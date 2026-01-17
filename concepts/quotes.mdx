@@ -1,0 +1,368 @@
+---
+title: "Quotes"
+description: "Generate optimal bridge quotes with fee estimates and route options"
+---
+
+# Quotes
+
+The Mina SDK provides quote generation to find optimal bridge routes with accurate fee estimates and execution times.
+
+## Overview
+
+Before executing a bridge transaction, you need to get a quote that provides:
+- Expected output amount after fees
+- Step-by-step route breakdown
+- Total fees (gas + bridge + protocol)
+- Estimated execution time
+- Price impact analysis
+
+## Quote Methods
+
+### getQuote(params)
+
+Fetches the optimal quote for a bridge transaction.
+
+```typescript
+import { Mina } from '@siphoyawe/mina-sdk';
+
+const mina = new Mina({ integrator: 'my-app' });
+
+const quote = await mina.getQuote({
+  fromChainId: 42161,          // Arbitrum
+  toChainId: 999,              // HyperEVM
+  fromToken: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831', // USDC on Arbitrum
+  toToken: '0xb88339cb7199b77e23db6e890353e22632ba630f',   // USDC on HyperEVM
+  fromAmount: '100000000',     // 100 USDC (6 decimals)
+  fromAddress: '0x...',        // User's wallet address
+});
+
+console.log(`Bridge ${quote.fromAmount} -> ${quote.toAmount}`);
+console.log(`Fees: $${quote.fees.totalUsd.toFixed(2)}`);
+console.log(`Time: ~${quote.estimatedTime} seconds`);
+```
+
+### getQuotes(paramsArray)
+
+Fetches multiple quotes for comparison.
+
+```typescript
+const { quotes, recommendedIndex } = await mina.getQuotes({
+  fromChainId: 42161,
+  toChainId: 999,
+  fromToken: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
+  toToken: '0xb88339cb7199b77e23db6e890353e22632ba630f',
+  fromAmount: '100000000',
+  fromAddress: '0x...',
+});
+
+console.log(`Found ${quotes.length} routes`);
+console.log(`Recommended: Route #${recommendedIndex + 1}`);
+```
+
+## Quote Parameters
+
+### QuoteParams
+
+```typescript
+interface QuoteParams {
+  /** Source chain ID */
+  fromChainId: number;
+  /** Destination chain ID (typically HyperEVM 999) */
+  toChainId: number;
+  /** Source token address */
+  fromToken: string;
+  /** Destination token address */
+  toToken: string;
+  /** Amount to bridge (in smallest unit, e.g., wei) */
+  fromAmount: string;
+  /** User's wallet address */
+  fromAddress: string;
+  /** Destination address (defaults to fromAddress) */
+  toAddress?: string;
+  /** Slippage tolerance in percentage (e.g., 0.5 = 0.5%) */
+  slippageTolerance?: number;
+  /** Route preference: 'recommended' | 'fastest' | 'cheapest' */
+  routePreference?: RoutePreference;
+}
+```
+
+## Quote Response
+
+### Quote
+
+The quote object contains all information needed for execution:
+
+```typescript
+interface Quote {
+  /** Unique quote ID */
+  id: string;
+  /** Route steps */
+  steps: Step[];
+  /** Fee breakdown */
+  fees: Fees;
+  /** Estimated total time in seconds */
+  estimatedTime: number;
+  /** Input amount */
+  fromAmount: string;
+  /** Expected output amount */
+  toAmount: string;
+  /** Slippage tolerance applied */
+  slippageTolerance: number;
+  /** Minimum amount to receive after slippage */
+  minimumReceived: string;
+  /** Minimum amount formatted */
+  minimumReceivedFormatted: string;
+  /** Price impact percentage (0.01 = 1%) */
+  priceImpact: number;
+  /** Whether price impact exceeds 1% */
+  highImpact: boolean;
+  /** Impact severity level */
+  impactSeverity: 'low' | 'medium' | 'high' | 'very_high';
+  /** Quote expiration timestamp */
+  expiresAt: number;
+  /** Source token info */
+  fromToken: Token;
+  /** Destination token info */
+  toToken: Token;
+  /** Whether auto-deposit to L1 is included */
+  includesAutoDeposit: boolean;
+  /** Route preference used */
+  routePreference: RoutePreference;
+  /** Alternative routes for comparison */
+  alternativeRoutes?: RouteComparison[];
+}
+```
+
+## Route Preferences
+
+Control how routes are selected:
+
+| Preference | Description |
+|------------|-------------|
+| `recommended` | Balance of speed and cost (default) |
+| `fastest` | Prioritize lowest execution time |
+| `cheapest` | Prioritize lowest total fees |
+
+```typescript
+// Get the fastest route
+const fastestQuote = await mina.getQuote({
+  fromChainId: 42161,
+  toChainId: 999,
+  fromToken: '0x...',
+  toToken: '0x...',
+  fromAmount: '100000000',
+  fromAddress: '0x...',
+  routePreference: 'fastest',
+});
+
+// Get the cheapest route
+const cheapestQuote = await mina.getQuote({
+  ...params,
+  routePreference: 'cheapest',
+});
+```
+
+## Price Impact Levels
+
+Price impact indicates how much the trade affects the market price:
+
+| Level | Threshold | Description |
+|-------|-----------|-------------|
+| `low` | < 0.1% | Negligible impact |
+| `medium` | 0.1% - 0.5% | Acceptable impact |
+| `high` | 0.5% - 1% | Warning level |
+| `very_high` | > 3% | Danger level |
+
+```typescript
+const quote = await mina.getQuote(params);
+
+if (quote.highImpact) {
+  console.warn(`High price impact: ${(quote.priceImpact * 100).toFixed(2)}%`);
+}
+
+// Check severity level
+switch (quote.impactSeverity) {
+  case 'low':
+    console.log('Price impact is minimal');
+    break;
+  case 'medium':
+    console.log('Price impact is acceptable');
+    break;
+  case 'high':
+    console.warn('Consider reducing trade size');
+    break;
+  case 'very_high':
+    console.error('Trade size may be too large');
+    break;
+}
+```
+
+<Warning>
+When `impactSeverity` is `high` or `very_high`, consider warning users and potentially blocking the transaction.
+</Warning>
+
+## Fee Breakdown
+
+Quotes include detailed fee information:
+
+```typescript
+interface Fees {
+  /** Total fees in USD */
+  totalUsd: number;
+  /** Gas fees in USD */
+  gasUsd: number;
+  /** Bridge/protocol fees in USD */
+  bridgeFeeUsd: number;
+  /** Protocol fee in USD (e.g., LI.FI fee) */
+  protocolFeeUsd: number;
+  /** Detailed gas estimate */
+  gasEstimate: GasEstimate;
+}
+
+// Example usage
+const quote = await mina.getQuote(params);
+
+console.log('Fee Breakdown:');
+console.log(`  Gas: $${quote.fees.gasUsd.toFixed(2)}`);
+console.log(`  Bridge: $${quote.fees.bridgeFeeUsd.toFixed(2)}`);
+console.log(`  Protocol: $${quote.fees.protocolFeeUsd.toFixed(2)}`);
+console.log(`  Total: $${quote.fees.totalUsd.toFixed(2)}`);
+```
+
+## Route Steps
+
+Each quote contains steps that will be executed:
+
+```typescript
+interface Step {
+  /** Step ID */
+  id: string;
+  /** Step type */
+  type: 'swap' | 'bridge' | 'deposit' | 'approve';
+  /** Tool/protocol being used */
+  tool: string;
+  /** Tool logo URL */
+  toolLogoUrl?: string;
+  /** Source chain ID */
+  fromChainId: number;
+  /** Destination chain ID */
+  toChainId: number;
+  /** Source token */
+  fromToken: Token;
+  /** Destination token */
+  toToken: Token;
+  /** Input amount */
+  fromAmount: string;
+  /** Expected output amount */
+  toAmount: string;
+  /** Estimated execution time in seconds */
+  estimatedTime: number;
+}
+
+// Display route steps
+quote.steps.forEach((step, index) => {
+  console.log(`Step ${index + 1}: ${step.type}`);
+  console.log(`  ${step.fromToken.symbol} -> ${step.toToken.symbol}`);
+  console.log(`  Via: ${step.tool}`);
+  console.log(`  Time: ~${step.estimatedTime}s`);
+});
+```
+
+## Example: Complete Quote Flow
+
+```typescript
+import { Mina } from '@siphoyawe/mina-sdk';
+
+const mina = new Mina({ integrator: 'my-app' });
+
+async function getAndDisplayQuote() {
+  const quote = await mina.getQuote({
+    fromChainId: 42161,
+    toChainId: 999,
+    fromToken: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
+    toToken: '0xb88339cb7199b77e23db6e890353e22632ba630f',
+    fromAmount: '100000000', // 100 USDC
+    fromAddress: '0x1234...',
+    slippageTolerance: 0.5, // 0.5%
+    routePreference: 'recommended',
+  });
+
+  // Display quote summary
+  console.log('--- Quote Summary ---');
+  console.log(`From: ${quote.fromToken.symbol} on chain ${quote.steps[0].fromChainId}`);
+  console.log(`To: ${quote.toToken.symbol} on HyperEVM`);
+  console.log(`Amount: ${quote.fromAmount} -> ${quote.toAmount}`);
+  console.log(`Min Received: ${quote.minimumReceivedFormatted}`);
+  console.log(`Fees: $${quote.fees.totalUsd.toFixed(2)}`);
+  console.log(`Time: ~${Math.round(quote.estimatedTime / 60)} minutes`);
+  console.log(`Price Impact: ${(quote.priceImpact * 100).toFixed(2)}%`);
+
+  // Check expiration
+  const expiresIn = quote.expiresAt - Date.now();
+  console.log(`Expires in: ${Math.round(expiresIn / 1000)} seconds`);
+
+  // Display alternative routes if available
+  if (quote.alternativeRoutes?.length) {
+    console.log('\n--- Alternative Routes ---');
+    quote.alternativeRoutes.forEach((alt, i) => {
+      console.log(`Route ${i + 1}: ${alt.type}`);
+      console.log(`  Fees: $${alt.totalFees}`);
+      console.log(`  Time: ${alt.estimatedTime}s`);
+    });
+  }
+
+  return quote;
+}
+```
+
+## Quote Expiration
+
+Quotes expire after **60 seconds**. Always check expiration before executing:
+
+```typescript
+const quote = await mina.getQuote(params);
+
+function isQuoteValid(quote: Quote): boolean {
+  return quote.expiresAt > Date.now();
+}
+
+// Before executing
+if (!isQuoteValid(quote)) {
+  console.log('Quote expired, fetching new quote...');
+  const newQuote = await mina.getQuote(params);
+  return newQuote;
+}
+```
+
+## Error Handling
+
+```typescript
+import {
+  NoRouteFoundError,
+  InvalidQuoteParamsError,
+  InvalidSlippageError
+} from '@siphoyawe/mina-sdk';
+
+try {
+  const quote = await mina.getQuote(params);
+} catch (error) {
+  if (error instanceof NoRouteFoundError) {
+    console.error('No bridge route available for this token pair');
+  } else if (error instanceof InvalidQuoteParamsError) {
+    console.error(`Invalid parameter: ${error.param} - ${error.reason}`);
+  } else if (error instanceof InvalidSlippageError) {
+    console.error('Slippage must be between 0.01% and 5%');
+  }
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Execution" icon="play" href="/concepts/execution">
+    Execute your bridge transaction
+  </Card>
+  <Card title="Slippage" icon="sliders" href="/concepts/slippage">
+    Configure slippage settings
+  </Card>
+</CardGroup>

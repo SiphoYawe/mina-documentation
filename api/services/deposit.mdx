@@ -1,0 +1,728 @@
+---
+title: 'Deposit Service'
+description: 'Deposit to Hyperliquid L1 trading account'
+---
+
+The Deposit Service handles the complete flow of depositing USDC from HyperEVM to Hyperliquid L1 (HyperCore) trading accounts. It includes three main modules:
+
+1. **USDC Arrival Detection** - Monitor for bridged USDC on HyperEVM
+2. **Deposit Execution** - Execute deposits to Hyperliquid L1
+3. **L1 Confirmation Monitoring** - Confirm deposits on Hyperliquid L1
+
+---
+
+## USDC Arrival Detection
+
+Monitor for USDC arrival on HyperEVM after a bridge transaction.
+
+### Exports
+
+```typescript
+import {
+  detectUsdcArrival,
+  detectUsdcArrivalFromSnapshot,
+  snapshotUsdcBalance,
+  checkUsdcBalance,
+  UsdcArrivalTimeoutError,
+  isUsdcArrivalTimeoutError,
+  ARRIVAL_DETECTION_TIMEOUT_MS,
+  ARRIVAL_POLL_INTERVAL_MS,
+} from '@mina-bridge/sdk/services/deposit';
+```
+
+### detectUsdcArrival(walletAddress, options?)
+
+Poll for USDC balance increase on HyperEVM.
+
+```typescript
+async function detectUsdcArrival(
+  walletAddress: string,
+  options?: DetectionOptions
+): Promise<UsdcArrivalResult>
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `walletAddress` | `string` | Yes | Wallet address to monitor |
+| `options` | `DetectionOptions` | No | Detection options |
+
+**DetectionOptions:**
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `timeout` | `number` | `300000` | Timeout in ms (5 minutes) |
+| `pollInterval` | `number` | `5000` | Poll interval in ms (5 seconds) |
+| `onPoll` | `(attempt, balance) => void` | - | Callback for each poll |
+| `expectedAmount` | `string` | - | Expected amount for validation |
+
+**Returns:** `UsdcArrivalResult`
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `detected` | `boolean` | Whether arrival was detected |
+| `amount` | `string` | Amount received (smallest unit) |
+| `amountFormatted` | `string` | Formatted amount with decimals |
+| `receivingTxHash` | `string \| undefined` | HyperEVM transaction hash |
+| `timestamp` | `number` | Detection timestamp |
+| `previousBalance` | `string` | Pre-bridge balance |
+| `currentBalance` | `string` | Current balance |
+
+**Throws:** `UsdcArrivalTimeoutError` if timeout is reached.
+
+**Example:**
+
+```typescript
+const arrival = await detectUsdcArrival('0x...', {
+  timeout: 300000, // 5 minutes
+  onPoll: (attempt, balance) => {
+    console.log(`Poll ${attempt}: Balance = ${balance}`);
+  },
+});
+
+if (arrival.detected) {
+  console.log(`USDC arrived: ${arrival.amountFormatted} USDC`);
+  // Proceed to deposit
+}
+```
+
+---
+
+### snapshotUsdcBalance(walletAddress)
+
+Take a balance snapshot before bridging.
+
+```typescript
+async function snapshotUsdcBalance(walletAddress: string): Promise<string>
+```
+
+**Example:**
+
+```typescript
+// Before bridge
+const preBalance = await snapshotUsdcBalance('0x...');
+
+// Execute bridge...
+await execute({ quote, signer });
+
+// Detect arrival from snapshot
+const arrival = await detectUsdcArrivalFromSnapshot(
+  '0x...',
+  preBalance,
+  { expectedAmount: quote.toAmount }
+);
+```
+
+---
+
+### detectUsdcArrivalFromSnapshot(walletAddress, previousBalance, options?)
+
+Detect arrival from a known balance snapshot.
+
+```typescript
+async function detectUsdcArrivalFromSnapshot(
+  walletAddress: string,
+  previousBalance: string,
+  options?: DetectionOptions
+): Promise<UsdcArrivalResult>
+```
+
+---
+
+### checkUsdcBalance(walletAddress)
+
+One-time check of USDC balance on HyperEVM.
+
+```typescript
+async function checkUsdcBalance(walletAddress: string): Promise<{
+  balance: string;
+  balanceFormatted: string;
+  chainId: number;
+  tokenAddress: string;
+}>
+```
+
+**Example:**
+
+```typescript
+const { balance, balanceFormatted } = await checkUsdcBalance('0x...');
+console.log(`HyperEVM USDC: ${balanceFormatted}`);
+```
+
+---
+
+## Deposit Execution
+
+Execute deposits from HyperEVM to Hyperliquid L1.
+
+### Exports
+
+```typescript
+import {
+  executeDeposit,
+  executeDepositFor,
+  validateDepositRequirements,
+  approveUsdcForDeposit,
+  checkDepositAllowance,
+  // Constants
+  CORE_DEPOSIT_WALLET_ADDRESS,
+  MINIMUM_DEPOSIT_AMOUNT,
+  DestinationDex,
+  CORE_DEPOSIT_WALLET_ABI,
+  ERC20_ABI,
+  // Errors
+  MinimumDepositError,
+  InsufficientGasError,
+  DepositTransactionError,
+  InvalidDepositAddressError,
+  isMinimumDepositError,
+  isInsufficientGasError,
+  isDepositTransactionError,
+  isInvalidDepositAddressError,
+} from '@mina-bridge/sdk/services/deposit';
+```
+
+### executeDeposit(signer, options)
+
+Execute a deposit to Hyperliquid L1 trading account.
+
+```typescript
+async function executeDeposit(
+  signer: DepositSigner,
+  options: DepositOptions
+): Promise<DepositResult>
+```
+
+**DepositSigner:**
+
+```typescript
+interface DepositSigner {
+  sendTransaction: (request: {
+    to: string;
+    data: string;
+    value?: string;
+    gas?: string;
+    chainId: number;
+  }) => Promise<string>;
+  getAddress: () => Promise<string>;
+  waitForTransactionReceipt?: (hash: string) => Promise<{
+    status: 'success' | 'reverted';
+    blockNumber: bigint;
+    gasUsed: bigint;
+  }>;
+}
+```
+
+**DepositOptions:**
+
+| Option | Type | Required | Default | Description |
+|--------|------|----------|---------|-------------|
+| `amount` | `string` | Yes | - | Amount in smallest units |
+| `walletAddress` | `string` | Yes | - | Wallet address |
+| `destinationDex` | `DestinationDexType` | No | `0` (PERPS) | Destination DEX |
+| `onDepositSubmitted` | `(txHash) => void` | No | - | Deposit tx callback |
+| `onApprovalSubmitted` | `(txHash) => void` | No | - | Approval tx callback |
+| `onStatusChange` | `(status) => void` | No | - | Status callback |
+| `infiniteApproval` | `boolean` | No | `false` | Infinite approval |
+
+**Returns:** `DepositResult`
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `success` | `boolean` | Whether deposit succeeded |
+| `depositTxHash` | `string` | Deposit transaction hash |
+| `approvalTxHash` | `string \| undefined` | Approval tx hash (if needed) |
+| `amount` | `string` | Deposited amount |
+| `amountFormatted` | `string` | Formatted amount |
+| `destinationDex` | `DestinationDexType` | Destination DEX |
+| `blockNumber` | `number \| undefined` | Confirmation block |
+| `gasUsed` | `string \| undefined` | Gas used |
+
+**Throws:**
+- `MinimumDepositError` if amount < 5 USDC
+- `InsufficientBalanceError` if USDC balance insufficient
+- `InsufficientGasError` if HYPE balance insufficient
+- `DepositTransactionError` if transaction fails
+- `UserRejectedError` if user rejects
+
+**Example:**
+
+```typescript
+import { executeDeposit, DestinationDex } from '@mina-bridge/sdk';
+
+const result = await executeDeposit(walletSigner, {
+  amount: '10000000', // 10 USDC (6 decimals)
+  walletAddress: '0x...',
+  destinationDex: DestinationDex.PERPS, // Trading account
+  onStatusChange: (status) => {
+    console.log(`Status: ${status}`);
+    // checking_balance -> checking_allowance -> approving ->
+    // approval_pending -> approval_confirmed -> depositing ->
+    // deposit_pending -> deposit_confirmed -> completed
+  },
+  onDepositSubmitted: (txHash) => {
+    console.log(`Deposit submitted: ${txHash}`);
+  },
+  infiniteApproval: true, // Save gas on future deposits
+});
+
+if (result.success) {
+  console.log(`Deposited ${result.amountFormatted} USDC`);
+  console.log(`TxHash: ${result.depositTxHash}`);
+}
+```
+
+---
+
+### executeDepositFor(signer, recipientAddress, options)
+
+Deposit on behalf of another address.
+
+```typescript
+async function executeDepositFor(
+  signer: DepositSigner,
+  recipientAddress: string,
+  options: DepositOptions
+): Promise<DepositResult>
+```
+
+**Example:**
+
+```typescript
+// Deposit to a different trading account
+const result = await executeDepositFor(
+  walletSigner,
+  '0xRecipientAddress...',
+  {
+    amount: '50000000', // 50 USDC
+    walletAddress: '0xMyWallet...',
+    destinationDex: DestinationDex.PERPS,
+  }
+);
+```
+
+---
+
+### validateDepositRequirements(walletAddress, amount)
+
+Pre-flight validation before deposit.
+
+```typescript
+async function validateDepositRequirements(
+  walletAddress: string,
+  amount: string
+): Promise<DepositValidation>
+```
+
+**Returns:** `DepositValidation`
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `valid` | `boolean` | Can deposit proceed |
+| `usdcBalance` | `string` | USDC balance |
+| `usdcBalanceFormatted` | `string` | Formatted USDC balance |
+| `gasBalance` | `string` | HYPE (gas) balance |
+| `currentAllowance` | `string` | Current deposit allowance |
+| `needsApproval` | `boolean` | Whether approval needed |
+| `error` | `string \| undefined` | Error message |
+
+**Example:**
+
+```typescript
+const validation = await validateDepositRequirements(
+  '0x...',
+  '10000000' // 10 USDC
+);
+
+if (!validation.valid) {
+  console.error('Cannot deposit:', validation.error);
+  return;
+}
+
+if (validation.needsApproval) {
+  console.log('Approval will be required');
+}
+
+console.log(`USDC Balance: ${validation.usdcBalanceFormatted}`);
+console.log(`Gas Balance: ${validation.gasBalance}`);
+```
+
+---
+
+### approveUsdcForDeposit(signer, amount, onSubmitted?)
+
+Execute USDC approval for CoreDepositWallet.
+
+```typescript
+async function approveUsdcForDeposit(
+  signer: DepositSigner,
+  amount: string,
+  onSubmitted?: (txHash: string) => void
+): Promise<{
+  txHash: string;
+  receipt: {
+    status: 'success' | 'reverted';
+    blockNumber: bigint;
+    gasUsed: bigint;
+  };
+}>
+```
+
+---
+
+### checkDepositAllowance(walletAddress)
+
+Check current USDC allowance for CoreDepositWallet.
+
+```typescript
+async function checkDepositAllowance(walletAddress: string): Promise<{
+  allowance: string;
+  allowanceFormatted: string;
+}>
+```
+
+---
+
+## L1 Confirmation Monitoring
+
+Monitor deposit confirmation on Hyperliquid L1.
+
+### Exports
+
+```typescript
+import {
+  monitorL1Confirmation,
+  waitForL1Confirmation,
+  getHyperliquidBalance,
+  getL1TradingBalance,
+  checkHyperliquidAccountExists,
+  createBridgeCompleteSummary,
+  // Constants
+  HYPERLIQUID_INFO_API,
+  L1_CONFIRMATION_TIMEOUT_MS,
+  L1_HARD_MAX_TIMEOUT_MS,
+  L1_POLL_INTERVAL_MS,
+  L1_USDC_DECIMALS,
+  // Errors
+  L1MonitorCancelledError,
+  InvalidL1AddressError,
+  isL1MonitorCancelledError,
+  isInvalidL1AddressError,
+} from '@mina-bridge/sdk/services/deposit';
+```
+
+### monitorL1Confirmation(walletAddress, expectedAmount, hyperEvmTxHash, options?)
+
+Monitor L1 with cancellation support.
+
+```typescript
+function monitorL1Confirmation(
+  walletAddress: string,
+  expectedAmount: string,
+  hyperEvmTxHash: string,
+  options?: L1MonitorOptions
+): {
+  result: Promise<L1ConfirmationResult>;
+  controller: L1MonitorController;
+}
+```
+
+**L1MonitorOptions:**
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `timeout` | `number` | `120000` | Timeout in ms (2 minutes) |
+| `pollInterval` | `number` | `5000` | Poll interval in ms |
+| `onProgress` | `(progress) => void` | - | Progress callback |
+| `onTimeoutWarning` | `(warning) => void` | - | Timeout warning callback |
+
+**Returns:** Object with:
+- `result`: Promise that resolves to `L1ConfirmationResult`
+- `controller`: `L1MonitorController` for managing monitoring
+
+**L1MonitorController:**
+
+```typescript
+interface L1MonitorController {
+  cancel: () => void;
+  extendTimeout: (additionalMs: number) => void;
+  getStatus: () => {
+    elapsed: number;
+    timeout: number;
+    isRunning: boolean;
+    cancelled: boolean;
+    completed: boolean;
+  };
+}
+```
+
+**Example:**
+
+```typescript
+// Start monitoring with controller
+const { result, controller } = monitorL1Confirmation(
+  '0x...',
+  '10000000', // Expected 10 USDC
+  depositResult.depositTxHash,
+  {
+    timeout: 120000, // 2 minutes
+    onProgress: (p) => {
+      console.log(`Checking L1... ${p.elapsed / 1000}s elapsed`);
+      console.log(`Balance: ${p.currentBalance}`);
+    },
+    onTimeoutWarning: (w) => {
+      console.warn('Timeout warning - still monitoring');
+    },
+  }
+);
+
+// Can extend timeout if needed
+setTimeout(() => {
+  const status = controller.getStatus();
+  if (status.isRunning && status.elapsed > 60000) {
+    console.log('Extending timeout by 1 minute...');
+    controller.extendTimeout(60000);
+  }
+}, 60000);
+
+// Await the result
+try {
+  const confirmation = await result;
+  console.log(`Confirmed: ${confirmation.amountFormatted} USDC`);
+  console.log(`Final balance: ${confirmation.finalBalanceFormatted}`);
+  console.log(`Time: ${confirmation.confirmationTime}ms`);
+} catch (error) {
+  if (isL1MonitorCancelledError(error)) {
+    console.log('Monitoring cancelled or timed out');
+  }
+}
+```
+
+---
+
+### waitForL1Confirmation(walletAddress, expectedAmount, hyperEvmTxHash, options?)
+
+Simple L1 confirmation (without controller).
+
+```typescript
+async function waitForL1Confirmation(
+  walletAddress: string,
+  expectedAmount: string,
+  hyperEvmTxHash: string,
+  options?: L1MonitorOptions
+): Promise<L1ConfirmationResult>
+```
+
+**Example:**
+
+```typescript
+const confirmation = await waitForL1Confirmation(
+  '0x...',
+  '10000000',
+  depositResult.depositTxHash
+);
+
+console.log(`Deposit confirmed: ${confirmation.amountFormatted} USDC`);
+```
+
+---
+
+### getHyperliquidBalance(walletAddress)
+
+Get Hyperliquid L1 trading account balance.
+
+```typescript
+async function getHyperliquidBalance(walletAddress: string): Promise<string>
+```
+
+**Returns:** Account value in smallest units (raw USD * 10^6).
+
+**Throws:**
+- `InvalidL1AddressError` if address is invalid
+- `NetworkError` if API fails
+
+**Example:**
+
+```typescript
+const balance = await getHyperliquidBalance('0x...');
+console.log(`L1 Balance: ${Number(balance) / 1e6} USD`);
+```
+
+---
+
+### getL1TradingBalance(walletAddress)
+
+Get formatted L1 trading balance.
+
+```typescript
+async function getL1TradingBalance(walletAddress: string): Promise<{
+  balance: string;
+  balanceFormatted: string;
+  chainId: number;
+}>
+```
+
+**Example:**
+
+```typescript
+const { balanceFormatted, chainId } = await getL1TradingBalance('0x...');
+console.log(`Hyperliquid (${chainId}) Balance: ${balanceFormatted} USD`);
+```
+
+---
+
+### checkHyperliquidAccountExists(walletAddress)
+
+Check if account has any trading history.
+
+```typescript
+async function checkHyperliquidAccountExists(walletAddress: string): Promise<boolean>
+```
+
+---
+
+### createBridgeCompleteSummary(params)
+
+Create a complete summary of the bridge-to-trading flow.
+
+```typescript
+function createBridgeCompleteSummary(params: {
+  sourceChainId: number;
+  sourceChainName: string;
+  sourceTxHash: string;
+  bridgeSteps: CompletedStep[];
+  bridgeStartTime: number;
+  depositResult: DepositResult;
+  depositStartTime: number;
+  l1MonitorStartTime?: number;
+  l1Confirmation: L1ConfirmationResult;
+  inputAmount: string;
+  totalFeesUsd: number;
+}): BridgeCompleteSummary
+```
+
+**Returns:** `BridgeCompleteSummary`
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `sourceChain` | `{ id, name }` | Source chain info |
+| `sourceTxHash` | `string` | First transaction hash |
+| `bridgeSteps` | `CompletedStep[]` | All bridge steps |
+| `bridgeTime` | `number` | Bridge time in ms |
+| `hyperEvmDepositTxHash` | `string` | Deposit tx hash |
+| `hyperEvmDepositTime` | `number` | Deposit time in ms |
+| `l1ConfirmationTime` | `number` | L1 confirmation time |
+| `inputAmount` | `string` | Original input |
+| `inputAmountFormatted` | `string` | Formatted input |
+| `outputAmount` | `string` | Deposited amount |
+| `outputAmountFormatted` | `string` | Formatted output |
+| `finalTradingBalance` | `string` | Final L1 balance |
+| `finalTradingBalanceFormatted` | `string` | Formatted L1 balance |
+| `totalTime` | `number` | Total time in ms |
+| `totalFeesUsd` | `string` | Total fees |
+| `completedAt` | `number` | Completion timestamp |
+
+---
+
+## Constants
+
+### Contract Addresses
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `CORE_DEPOSIT_WALLET_ADDRESS` | `0x6B9E773128f453f5c2C60935Ee2DE2CBc5390A24` | CoreDepositWallet on HyperEVM |
+| `HYPEREVM_USDC_ADDRESS` | `0xb88339cb7199b77e23db6e890353e22632ba630f` | USDC on HyperEVM |
+
+### Amounts
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `MINIMUM_DEPOSIT_AMOUNT` | `5000000` | Minimum deposit (5 USDC) |
+
+### DestinationDex
+
+```typescript
+const DestinationDex = {
+  PERPS: 0,           // Trading account (perps)
+  SPOT: 4294967295,   // Spot DEX (uint32.max)
+} as const;
+```
+
+### Timing
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `ARRIVAL_DETECTION_TIMEOUT_MS` | `300000` | 5 min - arrival timeout |
+| `ARRIVAL_POLL_INTERVAL_MS` | `5000` | 5 sec - arrival poll |
+| `L1_CONFIRMATION_TIMEOUT_MS` | `120000` | 2 min - L1 timeout |
+| `L1_HARD_MAX_TIMEOUT_MS` | `1800000` | 30 min - hard max |
+| `L1_POLL_INTERVAL_MS` | `5000` | 5 sec - L1 poll |
+
+### APIs
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `HYPERLIQUID_INFO_API` | `https://api.hyperliquid.xyz/info` | Hyperliquid Info API |
+
+---
+
+## Complete Flow Example
+
+```typescript
+import {
+  detectUsdcArrival,
+  executeDeposit,
+  monitorL1Confirmation,
+  DestinationDex,
+} from '@mina-bridge/sdk';
+
+async function bridgeAndDeposit(
+  quote: Quote,
+  signer: TransactionSigner,
+  walletAddress: string
+) {
+  // 1. Execute bridge
+  console.log('Starting bridge...');
+  const bridgeResult = await execute({ quote, signer });
+
+  if (bridgeResult.status !== 'completed') {
+    throw new Error('Bridge failed');
+  }
+
+  // 2. Detect USDC arrival on HyperEVM
+  console.log('Waiting for USDC arrival on HyperEVM...');
+  const arrival = await detectUsdcArrival(walletAddress, {
+    expectedAmount: quote.toAmount,
+    onPoll: (attempt) => console.log(`Checking... (attempt ${attempt})`),
+  });
+
+  console.log(`USDC arrived: ${arrival.amountFormatted}`);
+
+  // 3. Execute deposit to Hyperliquid L1
+  console.log('Depositing to Hyperliquid L1...');
+  const depositResult = await executeDeposit(signer, {
+    amount: arrival.amount,
+    walletAddress,
+    destinationDex: DestinationDex.PERPS,
+    onStatusChange: (status) => console.log(`Deposit: ${status}`),
+  });
+
+  // 4. Monitor L1 confirmation
+  console.log('Waiting for L1 confirmation...');
+  const { result, controller } = monitorL1Confirmation(
+    walletAddress,
+    arrival.amount,
+    depositResult.depositTxHash,
+    { onProgress: (p) => console.log(`L1 check... ${p.elapsed / 1000}s`) }
+  );
+
+  const l1Confirmation = await result;
+
+  console.log('\n=== Bridge Complete ===');
+  console.log(`Input: ${quote.fromAmount} USDC`);
+  console.log(`Deposited: ${l1Confirmation.amountFormatted} USDC`);
+  console.log(`Final L1 Balance: ${l1Confirmation.finalBalanceFormatted}`);
+  console.log(`Total Time: ${l1Confirmation.confirmationTime}ms`);
+
+  return { bridgeResult, depositResult, l1Confirmation };
+}
+```

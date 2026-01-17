@@ -1,0 +1,304 @@
+---
+title: "Custom RPC URLs"
+description: "Configure custom RPC endpoints for improved reliability and performance"
+---
+
+# Custom RPC URLs
+
+The Mina SDK supports custom RPC URL configuration for each chain. This allows you to use your own RPC endpoints for improved reliability, higher rate limits, and private transactions.
+
+## Why Use Custom RPCs
+
+<CardGroup cols={2}>
+  <Card title="Reliability" icon="shield-halved">
+    Public RPCs can be unreliable during high traffic. Premium RPCs offer better uptime guarantees.
+  </Card>
+  <Card title="Rate Limits" icon="gauge-high">
+    Public RPCs have strict rate limits. Custom RPCs provide higher throughput for production applications.
+  </Card>
+  <Card title="Privacy" icon="lock">
+    Private RPCs prevent transaction frontrunning and provide better MEV protection.
+  </Card>
+  <Card title="Speed" icon="bolt">
+    Premium RPCs often have lower latency and faster response times.
+  </Card>
+</CardGroup>
+
+## Basic Configuration
+
+Pass custom RPC URLs in the `MinaConfig` when creating the client:
+
+```typescript
+import { Mina } from '@siphoyawe/mina-sdk';
+
+const mina = new Mina({
+  integrator: 'my-app',
+  rpcUrls: {
+    1: 'https://eth-mainnet.g.alchemy.com/v2/YOUR_API_KEY',     // Ethereum
+    42161: 'https://arb-mainnet.g.alchemy.com/v2/YOUR_API_KEY', // Arbitrum
+    10: 'https://opt-mainnet.g.alchemy.com/v2/YOUR_API_KEY',    // Optimism
+    137: 'https://polygon-mainnet.g.alchemy.com/v2/YOUR_API_KEY', // Polygon
+    8453: 'https://base-mainnet.g.alchemy.com/v2/YOUR_API_KEY', // Base
+  }
+});
+```
+
+<Note>
+The `rpcUrls` object maps chain IDs to RPC endpoint URLs. You only need to specify RPCs for chains you plan to use.
+</Note>
+
+## Provider Examples
+
+### Alchemy
+
+```typescript
+const mina = new Mina({
+  integrator: 'my-app',
+  rpcUrls: {
+    1: 'https://eth-mainnet.g.alchemy.com/v2/YOUR_ALCHEMY_KEY',
+    42161: 'https://arb-mainnet.g.alchemy.com/v2/YOUR_ALCHEMY_KEY',
+    10: 'https://opt-mainnet.g.alchemy.com/v2/YOUR_ALCHEMY_KEY',
+    137: 'https://polygon-mainnet.g.alchemy.com/v2/YOUR_ALCHEMY_KEY',
+    8453: 'https://base-mainnet.g.alchemy.com/v2/YOUR_ALCHEMY_KEY',
+  }
+});
+```
+
+### Infura
+
+```typescript
+const mina = new Mina({
+  integrator: 'my-app',
+  rpcUrls: {
+    1: 'https://mainnet.infura.io/v3/YOUR_INFURA_KEY',
+    42161: 'https://arbitrum-mainnet.infura.io/v3/YOUR_INFURA_KEY',
+    10: 'https://optimism-mainnet.infura.io/v3/YOUR_INFURA_KEY',
+    137: 'https://polygon-mainnet.infura.io/v3/YOUR_INFURA_KEY',
+  }
+});
+```
+
+### QuickNode
+
+```typescript
+const mina = new Mina({
+  integrator: 'my-app',
+  rpcUrls: {
+    1: 'https://your-endpoint.quiknode.pro/YOUR_TOKEN/',
+    42161: 'https://your-arb-endpoint.quiknode.pro/YOUR_TOKEN/',
+    10: 'https://your-opt-endpoint.quiknode.pro/YOUR_TOKEN/',
+  }
+});
+```
+
+### Ankr
+
+```typescript
+const mina = new Mina({
+  integrator: 'my-app',
+  rpcUrls: {
+    1: 'https://rpc.ankr.com/eth/YOUR_ANKR_KEY',
+    42161: 'https://rpc.ankr.com/arbitrum/YOUR_ANKR_KEY',
+    10: 'https://rpc.ankr.com/optimism/YOUR_ANKR_KEY',
+    137: 'https://rpc.ankr.com/polygon/YOUR_ANKR_KEY',
+    8453: 'https://rpc.ankr.com/base/YOUR_ANKR_KEY',
+  }
+});
+```
+
+## Per-Chain Configuration
+
+You can configure RPCs for specific chains while leaving others to use defaults:
+
+```typescript
+const mina = new Mina({
+  integrator: 'my-app',
+  rpcUrls: {
+    // Only configure Ethereum and Arbitrum
+    // Other chains will use the SDK's default public RPCs
+    1: 'https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY',
+    42161: 'https://arb-mainnet.g.alchemy.com/v2/YOUR_KEY',
+  }
+});
+```
+
+## Common Chain IDs
+
+| Chain | Chain ID | Network |
+|-------|----------|---------|
+| Ethereum | 1 | Mainnet |
+| Arbitrum One | 42161 | L2 |
+| Optimism | 10 | L2 |
+| Polygon | 137 | Mainnet |
+| Base | 8453 | L2 |
+| Avalanche | 43114 | C-Chain |
+| BNB Chain | 56 | Mainnet |
+| Fantom | 250 | Opera |
+| HyperEVM | 999 | Destination |
+
+<Warning>
+Do not expose API keys in client-side code. For browser applications, use environment variables or a backend proxy to hide your RPC API keys.
+</Warning>
+
+## Environment-Based Configuration
+
+A common pattern for managing RPCs across environments:
+
+```typescript
+import { Mina, MinaConfig } from '@siphoyawe/mina-sdk';
+
+function createMinaConfig(): MinaConfig {
+  const isDev = process.env.NODE_ENV === 'development';
+
+  // Use different API keys for dev vs prod
+  const alchemyKey = isDev
+    ? process.env.ALCHEMY_DEV_KEY
+    : process.env.ALCHEMY_PROD_KEY;
+
+  return {
+    integrator: isDev ? 'my-app-dev' : 'my-app-prod',
+    rpcUrls: alchemyKey ? {
+      1: `https://eth-mainnet.g.alchemy.com/v2/${alchemyKey}`,
+      42161: `https://arb-mainnet.g.alchemy.com/v2/${alchemyKey}`,
+      10: `https://opt-mainnet.g.alchemy.com/v2/${alchemyKey}`,
+      8453: `https://base-mainnet.g.alchemy.com/v2/${alchemyKey}`,
+    } : undefined, // Use defaults if no key
+  };
+}
+
+const mina = new Mina(createMinaConfig());
+```
+
+## React / Next.js Configuration
+
+For React applications, configure RPCs in your provider:
+
+<Tabs>
+  <Tab title="Next.js (App Router)">
+    ```typescript
+    // app/providers.tsx
+    'use client';
+
+    import { MinaProvider } from '@siphoyawe/mina-sdk/react';
+
+    export function Providers({ children }: { children: React.ReactNode }) {
+      return (
+        <MinaProvider
+          config={{
+            integrator: 'my-nextjs-app',
+            rpcUrls: {
+              1: process.env.NEXT_PUBLIC_ETH_RPC_URL,
+              42161: process.env.NEXT_PUBLIC_ARB_RPC_URL,
+            }
+          }}
+        >
+          {children}
+        </MinaProvider>
+      );
+    }
+    ```
+  </Tab>
+  <Tab title="Vite">
+    ```typescript
+    // src/App.tsx
+    import { MinaProvider } from '@siphoyawe/mina-sdk/react';
+
+    function App() {
+      return (
+        <MinaProvider
+          config={{
+            integrator: 'my-vite-app',
+            rpcUrls: {
+              1: import.meta.env.VITE_ETH_RPC_URL,
+              42161: import.meta.env.VITE_ARB_RPC_URL,
+            }
+          }}
+        >
+          <YourApp />
+        </MinaProvider>
+      );
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Fallback Behavior
+
+When a custom RPC fails, the SDK does not automatically fall back to public RPCs. This is by design to ensure:
+
+1. **Predictable behavior** - Your app uses the RPCs you configured
+2. **Security** - Private transactions stay private
+3. **Debugging** - RPC issues are surfaced, not hidden
+
+To implement your own fallback logic:
+
+```typescript
+async function getBalanceWithFallback(
+  mina: Mina,
+  chainId: number,
+  tokenAddress: string,
+  walletAddress: string
+) {
+  try {
+    return await mina.getBalance(chainId, tokenAddress, walletAddress);
+  } catch (error) {
+    console.warn('Primary RPC failed, this would be where fallback logic goes');
+    throw error;
+  }
+}
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use Environment Variables" icon="key">
+    Never hardcode API keys. Use environment variables for all sensitive configuration.
+  </Card>
+  <Card title="Configure Key Chains" icon="link">
+    At minimum, configure RPCs for chains you expect high traffic on (usually Ethereum and your primary L2s).
+  </Card>
+  <Card title="Monitor Usage" icon="chart-line">
+    Set up monitoring on your RPC provider dashboard to track usage and avoid hitting limits.
+  </Card>
+  <Card title="Test Both Environments" icon="vial">
+    Use separate API keys for development and production to isolate usage and billing.
+  </Card>
+</CardGroup>
+
+## Complete Configuration Example
+
+```typescript
+import { Mina, MinaConfig } from '@siphoyawe/mina-sdk';
+
+// Production-ready configuration
+const config: MinaConfig = {
+  // App identifier for tracking
+  integrator: 'my-production-app',
+
+  // Auto-deposit to Hyperliquid L1
+  autoDeposit: true,
+
+  // Default slippage tolerance (0.5%)
+  defaultSlippage: 0.005,
+
+  // Custom RPC URLs for reliability
+  rpcUrls: {
+    // Ethereum - high traffic, needs premium RPC
+    1: process.env.ETH_RPC_URL!,
+
+    // Arbitrum - primary L2 for your app
+    42161: process.env.ARB_RPC_URL!,
+
+    // Optimism
+    10: process.env.OP_RPC_URL!,
+
+    // Base
+    8453: process.env.BASE_RPC_URL!,
+
+    // Polygon
+    137: process.env.POLYGON_RPC_URL!,
+  }
+};
+
+const mina = new Mina(config);
+```

@@ -1,0 +1,379 @@
+---
+title: "useTokenBalance"
+description: "React hook for fetching and tracking token balances with auto-refresh"
+---
+
+# useTokenBalance
+
+The `useTokenBalance` hook fetches token balances for a connected wallet with optional automatic refresh intervals.
+
+## Import
+
+```typescript
+import { useTokenBalance } from '@siphoyawe/mina-sdk/react';
+```
+
+## Signature
+
+```typescript
+function useTokenBalance(params: UseTokenBalanceParams): UseTokenBalanceReturn
+```
+
+## Parameters
+
+### UseTokenBalanceParams
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `chainId` | `number` | Yes | - | Chain ID to fetch balance from |
+| `tokenAddress` | `string` | Yes | - | Token contract address (use `'native'` for native tokens) |
+| `walletAddress` | `string` | Yes | - | Wallet address to check balance for |
+| `refetchInterval` | `number` | No | - | Auto-refresh interval in milliseconds |
+| `enabled` | `boolean` | No | `true` | Enable/disable fetching |
+
+## Returns
+
+### UseTokenBalanceReturn
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `balance` | `string \| null` | Raw balance in smallest unit (wei) |
+| `formattedBalance` | `string \| null` | Human-readable formatted balance |
+| `decimals` | `number \| null` | Token decimals (e.g., 18 for ETH, 6 for USDC) |
+| `symbol` | `string \| null` | Token symbol (e.g., 'ETH', 'USDC') |
+| `balanceUsd` | `number \| null` | USD value of balance (if available) |
+| `isLoading` | `boolean` | `true` while fetching |
+| `error` | `Error \| null` | Any error that occurred |
+| `refetch` | `() => Promise<void>` | Manually trigger a balance refresh |
+
+## Features
+
+- **Automatic refresh** - Set `refetchInterval` to keep balances up to date
+- **Smart formatting** - Balances are formatted with appropriate precision
+- **Native token support** - Use `'native'` for chain native tokens
+- **Stale-while-revalidate** - Previous balance shown during refresh
+- **Controlled fetching** - Use `enabled` to pause/resume
+
+## Basic Usage
+
+```typescript
+'use client';
+
+import { useTokenBalance } from '@siphoyawe/mina-sdk/react';
+
+function BalanceDisplay({ walletAddress }: { walletAddress: string }) {
+  const {
+    formattedBalance,
+    symbol,
+    isLoading,
+    error,
+  } = useTokenBalance({
+    chainId: 1,
+    tokenAddress: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', // USDC
+    walletAddress,
+  });
+
+  if (isLoading) return <span>Loading...</span>;
+  if (error) return <span>Error loading balance</span>;
+
+  return (
+    <span>
+      {formattedBalance ?? '0'} {symbol ?? 'USDC'}
+    </span>
+  );
+}
+```
+
+## Auto-Refresh Example
+
+Keep balances updated automatically:
+
+```typescript
+'use client';
+
+import { useTokenBalance } from '@siphoyawe/mina-sdk/react';
+
+function LiveBalance({ walletAddress }: { walletAddress: string }) {
+  const {
+    formattedBalance,
+    symbol,
+    balanceUsd,
+    isLoading,
+    refetch,
+  } = useTokenBalance({
+    chainId: 42161,
+    tokenAddress: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831', // USDC on Arbitrum
+    walletAddress,
+    refetchInterval: 10000, // Refresh every 10 seconds
+  });
+
+  return (
+    <div className="balance-card">
+      <div className="balance-amount">
+        {formattedBalance ?? '0'} {symbol}
+        {isLoading && <span className="refresh-indicator" />}
+      </div>
+
+      {balanceUsd !== null && (
+        <div className="balance-usd">
+          ${balanceUsd.toFixed(2)} USD
+        </div>
+      )}
+
+      <button onClick={refetch} disabled={isLoading}>
+        Refresh
+      </button>
+    </div>
+  );
+}
+```
+
+## Native Token Balance
+
+Fetch the native token balance (ETH, MATIC, etc.):
+
+```typescript
+'use client';
+
+import { useTokenBalance } from '@siphoyawe/mina-sdk/react';
+
+function NativeBalance({
+  chainId,
+  walletAddress
+}: {
+  chainId: number;
+  walletAddress: string;
+}) {
+  const { formattedBalance, symbol } = useTokenBalance({
+    chainId,
+    tokenAddress: 'native', // Special value for native tokens
+    walletAddress,
+    refetchInterval: 15000,
+  });
+
+  return (
+    <div>
+      {formattedBalance ?? '0'} {symbol ?? 'ETH'}
+    </div>
+  );
+}
+```
+
+<Note>
+You can also use the zero address (`0x0000000000000000000000000000000000000000`) instead of `'native'`.
+</Note>
+
+## Multiple Token Balances
+
+Display balances for multiple tokens:
+
+```typescript
+'use client';
+
+import { useTokenBalance } from '@siphoyawe/mina-sdk/react';
+
+interface TokenConfig {
+  chainId: number;
+  address: string;
+  label: string;
+}
+
+const TOKENS: TokenConfig[] = [
+  { chainId: 1, address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', label: 'USDC (Ethereum)' },
+  { chainId: 42161, address: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831', label: 'USDC (Arbitrum)' },
+  { chainId: 8453, address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', label: 'USDC (Base)' },
+];
+
+function TokenBalanceItem({
+  token,
+  walletAddress
+}: {
+  token: TokenConfig;
+  walletAddress: string;
+}) {
+  const { formattedBalance, symbol, isLoading } = useTokenBalance({
+    chainId: token.chainId,
+    tokenAddress: token.address,
+    walletAddress,
+    refetchInterval: 30000,
+  });
+
+  return (
+    <div className="token-row">
+      <span>{token.label}</span>
+      <span>
+        {isLoading ? '...' : `${formattedBalance ?? '0'} ${symbol}`}
+      </span>
+    </div>
+  );
+}
+
+function MultiTokenBalance({ walletAddress }: { walletAddress: string }) {
+  return (
+    <div className="token-list">
+      {TOKENS.map((token) => (
+        <TokenBalanceItem
+          key={`${token.chainId}-${token.address}`}
+          token={token}
+          walletAddress={walletAddress}
+        />
+      ))}
+    </div>
+  );
+}
+```
+
+## Conditional Fetching
+
+Control when balances are fetched:
+
+```typescript
+'use client';
+
+import { useTokenBalance } from '@siphoyawe/mina-sdk/react';
+
+function ConditionalBalance({
+  walletAddress,
+  isVisible
+}: {
+  walletAddress: string | undefined;
+  isVisible: boolean;
+}) {
+  const { formattedBalance, symbol } = useTokenBalance({
+    chainId: 42161,
+    tokenAddress: '0x...',
+    walletAddress: walletAddress ?? '',
+    // Only fetch when wallet is connected AND component is visible
+    enabled: !!walletAddress && isVisible,
+  });
+
+  if (!walletAddress) {
+    return <span>Connect wallet</span>;
+  }
+
+  return (
+    <span>{formattedBalance ?? '0'} {symbol}</span>
+  );
+}
+```
+
+## Integration with wagmi
+
+Combine with wagmi for a complete wallet experience:
+
+```typescript
+'use client';
+
+import { useAccount } from 'wagmi';
+import { useTokenBalance } from '@siphoyawe/mina-sdk/react';
+
+function WalletBalance() {
+  const { address, isConnected, chain } = useAccount();
+
+  const {
+    formattedBalance,
+    symbol,
+    balanceUsd,
+    isLoading
+  } = useTokenBalance({
+    chainId: chain?.id ?? 1,
+    tokenAddress: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+    walletAddress: address ?? '',
+    refetchInterval: 10000,
+    enabled: isConnected && !!address,
+  });
+
+  if (!isConnected) {
+    return <button>Connect Wallet</button>;
+  }
+
+  return (
+    <div className="wallet-balance">
+      <span className="balance">
+        {isLoading ? 'Loading...' : `${formattedBalance} ${symbol}`}
+      </span>
+      {balanceUsd !== null && (
+        <span className="usd">${balanceUsd.toFixed(2)}</span>
+      )}
+    </div>
+  );
+}
+```
+
+## Balance Formatting
+
+The hook automatically formats balances for display:
+
+| Balance Value | Formatted Output |
+|--------------|------------------|
+| 0 | `0` |
+| < 0.0001 | `<0.0001` |
+| < 1 | `0.1234` (4 decimals) |
+| < 1000 | `123.45` (2 decimals) |
+| < 1,000,000 | `123.45K` |
+| >= 1,000,000 | `1.23M` |
+
+## Error Handling
+
+```typescript
+'use client';
+
+import { useTokenBalance } from '@siphoyawe/mina-sdk/react';
+
+function RobustBalanceDisplay({ walletAddress }: { walletAddress: string }) {
+  const {
+    formattedBalance,
+    symbol,
+    isLoading,
+    error,
+    refetch,
+  } = useTokenBalance({
+    chainId: 42161,
+    tokenAddress: '0x...',
+    walletAddress,
+    refetchInterval: 15000,
+  });
+
+  if (error) {
+    return (
+      <div className="error-state">
+        <span>Failed to load balance</span>
+        <button onClick={refetch}>Retry</button>
+      </div>
+    );
+  }
+
+  return (
+    <div className={isLoading ? 'opacity-70' : ''}>
+      {formattedBalance ?? '--'} {symbol ?? ''}
+    </div>
+  );
+}
+```
+
+## Best Practices
+
+<Note>
+**Performance and UX Tips:**
+
+1. **Choose refresh intervals wisely** - Too frequent refreshes waste resources. 10-30 seconds is usually sufficient.
+
+2. **Use `enabled` for optimization** - Disable fetching when the component is not visible or wallet is not connected.
+
+3. **Handle loading gracefully** - Show previous balance while refreshing (stale-while-revalidate pattern).
+
+4. **Clear data on wallet change** - The hook automatically clears data when `walletAddress` changes.
+
+5. **Manual refetch clears interval** - When you call `refetch()`, the auto-refresh timer resets to prevent overlapping requests.
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="useQuote" icon="calculator" href="/react/hooks/use-quote">
+    Fetch bridge quotes
+  </Card>
+  <Card title="useTransactionStatus" icon="clock" href="/react/hooks/use-transaction-status">
+    Track transaction progress
+  </Card>
+</CardGroup>

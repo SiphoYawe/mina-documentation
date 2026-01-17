@@ -1,0 +1,548 @@
+---
+title: 'Balance Service'
+description: 'Token balance fetching and validation service'
+---
+
+The Balance Service provides functions for fetching token balances across chains, with built-in caching, validation, and error handling.
+
+## Exports
+
+```typescript
+import {
+  getBalance,
+  getBalances,
+  getChainBalances,
+  getBalanceWithMetadata,
+  validateBalance,
+  checkBalance,
+  createBalanceCache,
+  BalanceCache,
+  BalanceFetchError,
+  InvalidAddressError,
+  isBalanceFetchError,
+  isInvalidAddressError,
+} from '@mina-bridge/sdk/services/balance';
+```
+
+---
+
+## Functions
+
+### getBalance(chainId, tokenAddress, walletAddress, cache?)
+
+Get token balance for a specific wallet address.
+
+```typescript
+async function getBalance(
+  chainId: number,
+  tokenAddress: string,
+  walletAddress: string,
+  cache?: BalanceCache
+): Promise<Balance>
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `chainId` | `number` | Yes | Chain ID |
+| `tokenAddress` | `string` | Yes | Token contract address |
+| `walletAddress` | `string` | Yes | Wallet address to check |
+| `cache` | `BalanceCache` | No | Optional cache instance |
+
+**Returns:** `Balance`
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `token` | `Token` | Token metadata |
+| `balance` | `string` | Balance in smallest unit |
+| `formatted` | `string` | Balance formatted with decimals |
+| `balanceUsd` | `number \| undefined` | Balance in USD |
+
+**Throws:**
+- `InvalidAddressError` if the wallet address is invalid
+- `BalanceFetchError` if the API fails and no cache available
+
+**Example:**
+
+```typescript
+import { getBalance, NATIVE_TOKEN_ADDRESS } from '@mina-bridge/sdk';
+
+// Get USDC balance on Ethereum
+const usdcBalance = await getBalance(
+  1,
+  '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+  '0xYourWalletAddress...'
+);
+
+console.log(`USDC: ${usdcBalance.formatted}`);       // "1234.56"
+console.log(`USD Value: $${usdcBalance.balanceUsd}`); // "1234.56"
+
+// Get native ETH balance
+const ethBalance = await getBalance(
+  1,
+  NATIVE_TOKEN_ADDRESS,
+  '0xYourWalletAddress...'
+);
+
+console.log(`ETH: ${ethBalance.formatted}`);
+```
+
+---
+
+### getBalances(walletAddress, chainIds, tokenAddresses?, cache?)
+
+Get token balances across multiple chains in parallel.
+
+```typescript
+async function getBalances(
+  walletAddress: string,
+  chainIds: number[],
+  tokenAddresses?: Record<number, string[]>,
+  cache?: BalanceCache
+): Promise<BalancesResponse>
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `walletAddress` | `string` | Yes | Wallet address to check |
+| `chainIds` | `number[]` | Yes | Array of chain IDs |
+| `tokenAddresses` | `Record<number, string[]>` | No | Token addresses per chain |
+| `cache` | `BalanceCache` | No | Optional cache instance |
+
+**Returns:** `BalancesResponse`
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `balances` | `Record<number, Balance[]>` | Balances grouped by chain ID |
+| `totalUsd` | `number` | Total value in USD |
+| `isStale` | `boolean` | Whether any data is from stale cache |
+
+**Example:**
+
+```typescript
+// Get native token balances on multiple chains
+const response = await getBalances(
+  '0x...',
+  [1, 42161, 137]  // Ethereum, Arbitrum, Polygon
+);
+
+console.log(`Total portfolio: $${response.totalUsd.toFixed(2)}`);
+
+// Access balances by chain
+Object.entries(response.balances).forEach(([chainId, balances]) => {
+  console.log(`Chain ${chainId}:`);
+  balances.forEach(b => {
+    console.log(`  ${b.token.symbol}: ${b.formatted}`);
+  });
+});
+```
+
+```typescript
+// Get specific tokens per chain
+const response = await getBalances(
+  '0x...',
+  [1, 42161],
+  {
+    1: [
+      '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', // USDC
+      '0xdAC17F958D2ee523a2206206994597C13D831ec7', // USDT
+    ],
+    42161: [
+      '0xaf88d065e77c8cC2239327C5EDb3A432268e5831', // USDC on Arbitrum
+    ],
+  }
+);
+```
+
+---
+
+### getChainBalances(walletAddress, chainId, cache?)
+
+Get all supported token balances for a specific chain.
+
+```typescript
+async function getChainBalances(
+  walletAddress: string,
+  chainId: number,
+  cache?: BalanceCache
+): Promise<BalanceWithMetadata[]>
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `walletAddress` | `string` | Yes | Wallet address to check |
+| `chainId` | `number` | Yes | Chain ID |
+| `cache` | `BalanceCache` | No | Optional cache instance |
+
+**Returns:** Array of `BalanceWithMetadata` with extended information.
+
+**Example:**
+
+```typescript
+const balances = await getChainBalances('0x...', 1);
+
+// Filter to tokens with non-zero balance
+const nonZeroBalances = balances.filter(b => b.hasBalance);
+
+console.log(`You have ${nonZeroBalances.length} tokens on Ethereum:`);
+nonZeroBalances.forEach(b => {
+  console.log(`  ${b.token.symbol}: ${b.formatted} ($${b.balanceUsd ?? 0})`);
+});
+```
+
+---
+
+### getBalanceWithMetadata(chainId, tokenAddress, walletAddress, cache?)
+
+Get balance with additional metadata like USD value and price.
+
+```typescript
+async function getBalanceWithMetadata(
+  chainId: number,
+  tokenAddress: string,
+  walletAddress: string,
+  cache?: BalanceCache
+): Promise<BalanceWithMetadata>
+```
+
+**Returns:** `BalanceWithMetadata`
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `token` | `Token` | Token metadata |
+| `balance` | `string` | Balance in smallest unit |
+| `formatted` | `string` | Balance formatted with decimals |
+| `balanceUsd` | `number \| undefined` | Balance in USD |
+| `hasBalance` | `boolean` | Whether balance is greater than 0 |
+| `chainId` | `number` | Chain ID |
+| `priceUsd` | `number \| undefined` | Current token price in USD |
+
+**Example:**
+
+```typescript
+const balance = await getBalanceWithMetadata(
+  1,
+  '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+  '0x...'
+);
+
+if (balance.hasBalance) {
+  console.log(`Amount: ${balance.formatted} ${balance.token.symbol}`);
+  console.log(`Price: $${balance.priceUsd}`);
+  console.log(`Value: $${balance.balanceUsd}`);
+}
+```
+
+---
+
+### validateBalance(quote, walletAddress, cache?)
+
+Validate that a user has sufficient balance to execute a quote.
+
+```typescript
+async function validateBalance(
+  quote: Quote,
+  walletAddress: string,
+  cache?: BalanceCache
+): Promise<BalanceValidation>
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `quote` | `Quote` | Yes | Quote to validate against |
+| `walletAddress` | `string` | Yes | Wallet address to check |
+| `cache` | `BalanceCache` | No | Optional cache instance |
+
+**Returns:** `BalanceValidation`
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `valid` | `boolean` | Whether validation passed |
+| `warnings` | `BalanceWarning[]` | Array of warnings |
+| `tokenBalance` | `Balance` | Source token balance |
+| `gasBalance` | `Balance` | Native token balance for gas |
+
+**BalanceWarning Types:**
+
+| Type | Description |
+|------|-------------|
+| `INSUFFICIENT_BALANCE` | Not enough tokens to bridge |
+| `INSUFFICIENT_GAS` | Not enough native token for gas |
+| `LOW_GAS` | Gas balance is low (< 2x estimated) |
+
+**Example:**
+
+```typescript
+const quote = await mina.getQuote({ ... });
+const validation = await validateBalance(quote, '0x...');
+
+if (!validation.valid) {
+  validation.warnings.forEach(warning => {
+    switch (warning.type) {
+      case 'INSUFFICIENT_BALANCE':
+        console.error(
+          `Need ${warning.shortfall} more ${warning.token.symbol}`
+        );
+        break;
+      case 'INSUFFICIENT_GAS':
+        console.error(
+          `Need ${warning.shortfall} more ${warning.token.symbol} for gas`
+        );
+        break;
+      case 'LOW_GAS':
+        console.warn(warning.message);
+        break;
+    }
+  });
+}
+```
+
+---
+
+### checkBalance(chainId, tokenAddress, walletAddress, amount, cache?)
+
+Quick check if a user has sufficient balance for a specific amount.
+
+```typescript
+async function checkBalance(
+  chainId: number,
+  tokenAddress: string,
+  walletAddress: string,
+  amount: string,
+  cache?: BalanceCache
+): Promise<BalanceCheckResult>
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `chainId` | `number` | Yes | Chain ID |
+| `tokenAddress` | `string` | Yes | Token address |
+| `walletAddress` | `string` | Yes | Wallet address |
+| `amount` | `string` | Yes | Amount to check (smallest unit) |
+| `cache` | `BalanceCache` | No | Optional cache instance |
+
+**Returns:** `BalanceCheckResult`
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `sufficient` | `boolean` | Whether balance is sufficient |
+| `balance` | `string` | Current balance |
+| `formatted` | `string` | Formatted balance |
+| `required` | `string` | Required amount |
+| `shortfall` | `string \| undefined` | Amount short (if insufficient) |
+
+**Example:**
+
+```typescript
+// Check before showing quote UI
+const check = await checkBalance(
+  1,
+  '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', // USDC
+  '0x...',
+  '1000000000' // 1000 USDC (6 decimals)
+);
+
+if (!check.sufficient) {
+  console.log(`Balance: ${check.formatted}`);
+  console.log(`Required: ${check.required}`);
+  console.log(`Shortfall: ${check.shortfall}`);
+} else {
+  console.log('Sufficient balance to proceed');
+}
+```
+
+---
+
+## Error Types
+
+### BalanceFetchError
+
+Thrown when balance fetching fails.
+
+```typescript
+class BalanceFetchError extends MinaError {
+  readonly code: 'BALANCE_FETCH_FAILED';
+  readonly chainId: number;
+  readonly tokenAddress: string;
+  readonly recoverable: true;
+  readonly recoveryAction: 'retry';
+  readonly cachedAvailable: boolean;
+}
+```
+
+**Example:**
+
+```typescript
+try {
+  const balance = await getBalance(1, tokenAddress, walletAddress);
+} catch (error) {
+  if (isBalanceFetchError(error)) {
+    console.error(`Failed to fetch balance for chain ${error.chainId}`);
+    if (error.cachedAvailable) {
+      console.log('Cached data may be available');
+    }
+  }
+}
+```
+
+### InvalidAddressError
+
+Thrown when an invalid wallet address is provided.
+
+```typescript
+class InvalidAddressError extends MinaError {
+  readonly code: 'INVALID_ADDRESS';
+  readonly address: string;
+  readonly recoverable: false;
+}
+```
+
+**Example:**
+
+```typescript
+try {
+  const balance = await getBalance(1, tokenAddress, 'invalid-address');
+} catch (error) {
+  if (isInvalidAddressError(error)) {
+    console.error(`Invalid address: ${error.address}`);
+  }
+}
+```
+
+---
+
+## BalanceCache Class
+
+The `BalanceCache` class manages caching for balance data with a 30-second TTL.
+
+### Methods
+
+```typescript
+class BalanceCache {
+  /** Get cached balance if not expired */
+  getBalance(
+    chainId: number,
+    tokenAddress: string,
+    walletAddress: string
+  ): { data: Balance; cachedAt: number } | null;
+
+  /** Store balance in cache */
+  setBalance(
+    chainId: number,
+    tokenAddress: string,
+    walletAddress: string,
+    balance: Balance
+  ): void;
+
+  /** Invalidate cache for a wallet or all */
+  invalidate(walletAddress?: string): void;
+
+  /** Check if cached balance exists (even if expired) */
+  hasCached(
+    chainId: number,
+    tokenAddress: string,
+    walletAddress: string
+  ): boolean;
+
+  /** Get balance even if expired (for fallback) */
+  getBalanceStale(
+    chainId: number,
+    tokenAddress: string,
+    walletAddress: string
+  ): { data: Balance; cachedAt: number } | null;
+}
+```
+
+### Example Usage
+
+```typescript
+const cache = createBalanceCache();
+
+// First request - fetches from API
+const balance1 = await getBalance(1, tokenAddr, walletAddr, cache);
+
+// Second request within 30 seconds - uses cache
+const balance2 = await getBalance(1, tokenAddr, walletAddr, cache);
+
+// Force refresh for specific wallet
+cache.invalidate('0x...');
+
+// Force refresh all
+cache.invalidate();
+```
+
+---
+
+## Types
+
+### Balance
+
+```typescript
+interface Balance {
+  /** Token metadata */
+  token: Token;
+  /** Balance in smallest unit */
+  balance: string;
+  /** Balance formatted with decimals */
+  formatted: string;
+  /** Balance in USD */
+  balanceUsd?: number;
+}
+```
+
+### BalanceWithMetadata
+
+```typescript
+interface BalanceWithMetadata extends Balance {
+  /** Whether balance is greater than 0 */
+  hasBalance: boolean;
+  /** Chain ID */
+  chainId: number;
+  /** Current token price in USD */
+  priceUsd?: number;
+}
+```
+
+### BalanceValidation
+
+```typescript
+interface BalanceValidation {
+  /** Whether validation passed */
+  valid: boolean;
+  /** Array of warnings */
+  warnings: BalanceWarning[];
+  /** Source token balance */
+  tokenBalance: Balance;
+  /** Native token balance for gas */
+  gasBalance: Balance;
+}
+```
+
+### BalanceWarning
+
+```typescript
+interface BalanceWarning {
+  type: 'INSUFFICIENT_BALANCE' | 'INSUFFICIENT_GAS' | 'LOW_GAS';
+  message: string;
+  token: Token;
+  required?: string;
+  available: string;
+  shortfall?: string;
+}
+```
+
+### BalanceCheckResult
+
+```typescript
+interface BalanceCheckResult {
+  /** Whether balance is sufficient */
+  sufficient: boolean;
+  /** Current balance in smallest unit */
+  balance: string;
+  /** Formatted balance */
+  formatted: string;
+  /** Required amount */
+  required: string;
+  /** Amount short (if insufficient) */
+  shortfall?: string;
+}
+```

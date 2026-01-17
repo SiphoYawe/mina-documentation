@@ -1,0 +1,190 @@
+---
+title: "Installation"
+description: "Install the Mina SDK in your project"
+---
+
+# Installation
+
+Install the Mina SDK using your preferred package manager.
+
+## Package Managers
+
+<CodeGroup>
+```bash npm
+npm install @siphoyawe/mina-sdk
+```
+
+```bash yarn
+yarn add @siphoyawe/mina-sdk
+```
+
+```bash pnpm
+pnpm add @siphoyawe/mina-sdk
+```
+
+```bash bun
+bun add @siphoyawe/mina-sdk
+```
+</CodeGroup>
+
+## Peer Dependencies
+
+The SDK requires `viem` as a peer dependency for Ethereum interactions:
+
+<CodeGroup>
+```bash npm
+npm install viem
+```
+
+```bash yarn
+yarn add viem
+```
+
+```bash pnpm
+pnpm add viem
+```
+</CodeGroup>
+
+## React Integration
+
+If you plan to use the React hooks, you also need React 18 or higher:
+
+<CodeGroup>
+```bash npm
+npm install @siphoyawe/mina-sdk viem react react-dom
+```
+
+```bash yarn
+yarn add @siphoyawe/mina-sdk viem react react-dom
+```
+</CodeGroup>
+
+## TypeScript Support
+
+The SDK is written in TypeScript and includes type definitions. No additional `@types` packages are required.
+
+Ensure your `tsconfig.json` includes:
+
+```json tsconfig.json
+{
+  "compilerOptions": {
+    "moduleResolution": "bundler", // or "node16"
+    "target": "ES2020",
+    "lib": ["ES2020", "DOM"]
+  }
+}
+```
+
+## Import Paths
+
+The SDK provides two entry points:
+
+```typescript
+// Main SDK - client, services, types, errors
+import { Mina, getChains, getTokens } from '@siphoyawe/mina-sdk';
+
+// React hooks and provider
+import { MinaProvider, useMina, useQuote } from '@siphoyawe/mina-sdk/react';
+```
+
+## Bundle Formats
+
+The SDK ships with both ESM and CommonJS bundles:
+
+| Format | File | Use Case |
+|--------|------|----------|
+| ESM | `index.mjs` | Modern bundlers (Vite, webpack 5, esbuild) |
+| CJS | `index.js` | Node.js, older bundlers |
+| Types | `index.d.ts` | TypeScript support |
+
+## Verifying Installation
+
+Create a simple test file to verify the SDK is installed correctly:
+
+```typescript test.ts
+import { Mina } from '@siphoyawe/mina-sdk';
+
+const mina = new Mina({
+  integrator: 'my-app'
+});
+
+// Fetch supported chains
+const { chains } = await mina.getChains();
+console.log(`SDK loaded. ${chains.length} chains available.`);
+```
+
+Run with:
+
+```bash
+npx tsx test.ts
+```
+
+You should see output like:
+
+```
+SDK loaded. 42 chains available.
+```
+
+## Framework-Specific Setup
+
+<Tabs>
+  <Tab title="Next.js">
+    The SDK works with Next.js App Router and Pages Router. For server components, use the SDK in client components only:
+
+    ```typescript
+    'use client';
+
+    import { MinaProvider } from '@siphoyawe/mina-sdk/react';
+
+    export function Providers({ children }) {
+      return (
+        <MinaProvider config={{ integrator: 'my-app' }}>
+          {children}
+        </MinaProvider>
+      );
+    }
+    ```
+  </Tab>
+  <Tab title="Vite">
+    No additional configuration needed. Import and use directly:
+
+    ```typescript
+    import { Mina } from '@siphoyawe/mina-sdk';
+    ```
+  </Tab>
+  <Tab title="Node.js">
+    The SDK works in Node.js environments for server-side bridging:
+
+    ```typescript
+    import { Mina } from '@siphoyawe/mina-sdk';
+
+    const mina = new Mina({
+      integrator: 'my-backend-service'
+    });
+    ```
+  </Tab>
+</Tabs>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Module not found error">
+    Ensure you have installed the peer dependency `viem`:
+    ```bash
+    npm install viem
+    ```
+  </Accordion>
+  <Accordion title="TypeScript errors with imports">
+    Update your `tsconfig.json` to use `moduleResolution: "bundler"` or `"node16"`.
+  </Accordion>
+  <Accordion title="React hooks not available">
+    Import from the `/react` subpath:
+    ```typescript
+    import { useMina } from '@siphoyawe/mina-sdk/react';
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+Now that the SDK is installed, proceed to the [Quick Start](/quickstart) guide to execute your first bridge transaction.

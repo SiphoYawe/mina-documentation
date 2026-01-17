@@ -1,0 +1,306 @@
+---
+title: "Quote and Execution Types"
+description: "TypeScript type definitions for bridge quotes and execution"
+---
+
+# Quote and Execution Types
+
+Types for bridge quotes, route steps, and execution handling.
+
+## QuoteParams
+
+Parameters for requesting a bridge quote.
+
+```typescript
+interface QuoteParams {
+  /** Source chain ID */
+  fromChainId: number;
+  /** Destination chain ID (typically HyperEVM 999) */
+  toChainId: number;
+  /** Source token address */
+  fromToken: string;
+  /** Destination token address */
+  toToken: string;
+  /** Amount to bridge (in smallest unit, e.g., wei) */
+  fromAmount: string;
+  /** User's wallet address */
+  fromAddress: string;
+  /** Destination address (defaults to fromAddress) */
+  toAddress?: string;
+  /**
+   * Slippage tolerance in percentage format (e.g., 0.5 = 0.5%)
+   * Valid range: 0.01 to 5.0
+   * Preset values: 0.1, 0.5, 1.0
+   * Defaults to 0.5 if not specified
+   */
+  slippageTolerance?: number;
+  /**
+   * @deprecated Use slippageTolerance instead.
+   * Slippage in decimal format (0.005 = 0.5%)
+   */
+  slippage?: number;
+  /** Route preference: 'recommended' | 'fastest' | 'cheapest' */
+  routePreference?: RoutePreference;
+}
+```
+
+### Properties
+
+| Property | Type | Required | Default | Description |
+|----------|------|----------|---------|-------------|
+| `fromChainId` | `number` | Yes | - | Source chain ID (e.g., 1 for Ethereum) |
+| `toChainId` | `number` | Yes | - | Destination chain ID (typically 999 for HyperEVM) |
+| `fromToken` | `string` | Yes | - | Source token contract address |
+| `toToken` | `string` | Yes | - | Destination token contract address |
+| `fromAmount` | `string` | Yes | - | Amount in smallest unit (e.g., "1000000" for 1 USDC) |
+| `fromAddress` | `string` | Yes | - | User's wallet address (sender) |
+| `toAddress` | `string` | No | `fromAddress` | Recipient address on destination chain |
+| `slippageTolerance` | `number` | No | `0.5` | Slippage tolerance as percentage (0.5 = 0.5%) |
+| `slippage` | `number` | No | - | Deprecated: Use `slippageTolerance` instead |
+| `routePreference` | `RoutePreference` | No | `'recommended'` | Route selection preference |
+
+---
+
+## Quote
+
+Complete quote response with route details and pricing.
+
+```typescript
+interface Quote {
+  /** Unique quote ID */
+  id: string;
+  /** Route steps */
+  steps: Step[];
+  /** Fee breakdown */
+  fees: Fees;
+  /** Estimated total time in seconds */
+  estimatedTime: number;
+  /** Input amount */
+  fromAmount: string;
+  /** Expected output amount */
+  toAmount: string;
+  /** Slippage tolerance applied (percentage format) */
+  slippageTolerance: number;
+  /** Minimum amount to receive after slippage */
+  minimumReceived: string;
+  /** Minimum amount formatted with decimals */
+  minimumReceivedFormatted: string;
+  /** Price impact percentage (0.01 = 1%) */
+  priceImpact: number;
+  /** Whether price impact exceeds HIGH threshold (1%) */
+  highImpact: boolean;
+  /** Price impact severity level */
+  impactSeverity: 'low' | 'medium' | 'high' | 'very_high';
+  /** Quote expiration timestamp */
+  expiresAt: number;
+  /** Source token */
+  fromToken: Token;
+  /** Destination token */
+  toToken: Token;
+  /** Whether auto-deposit to Hyperliquid L1 is included */
+  includesAutoDeposit: boolean;
+  /** Whether manual deposit is required */
+  manualDepositRequired: boolean;
+  /** Route preference used for this quote */
+  routePreference: RoutePreference;
+  /** Alternative routes for comparison (up to 3) */
+  alternativeRoutes?: RouteComparison[];
+}
+```
+
+### Key Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `id` | `string` | Unique identifier for tracking this quote |
+| `steps` | `Step[]` | Array of execution steps (swaps, bridges) |
+| `fees` | `Fees` | Detailed fee breakdown |
+| `estimatedTime` | `number` | Total estimated execution time in seconds |
+| `toAmount` | `string` | Expected output amount (before slippage) |
+| `minimumReceived` | `string` | Guaranteed minimum after slippage |
+| `priceImpact` | `number` | Price impact as decimal (0.01 = 1%) |
+| `highImpact` | `boolean` | Warning flag if impact >= 1% |
+| `expiresAt` | `number` | Unix timestamp when quote expires |
+| `includesAutoDeposit` | `boolean` | Whether L1 deposit is automatic |
+
+---
+
+## Step
+
+A single step in a bridge route.
+
+```typescript
+interface Step {
+  /** Step ID */
+  id: string;
+  /** Step type */
+  type: 'swap' | 'bridge' | 'deposit' | 'approve';
+  /** Tool/protocol being used */
+  tool: string;
+  /** Tool logo URL */
+  toolLogoUrl?: string;
+  /** Source chain ID */
+  fromChainId: number;
+  /** Destination chain ID */
+  toChainId: number;
+  /** Source token */
+  fromToken: Token;
+  /** Destination token */
+  toToken: Token;
+  /** Input amount */
+  fromAmount: string;
+  /** Expected output amount */
+  toAmount: string;
+  /** Estimated execution time in seconds */
+  estimatedTime: number;
+}
+```
+
+### Step Types
+
+| Type | Description |
+|------|-------------|
+| `'approve'` | Token approval for spending |
+| `'swap'` | Token swap on source chain |
+| `'bridge'` | Cross-chain bridge transfer |
+| `'deposit'` | Deposit to Hyperliquid L1 |
+
+---
+
+## ExecuteOptions
+
+Options for executing a bridge quote.
+
+```typescript
+interface ExecuteOptions {
+  /** Quote to execute */
+  quote: Quote;
+  /** Signer for transaction signing */
+  signer: TransactionSigner;
+  /** Callback for step status updates */
+  onStepChange?: OnStepChange;
+  /** Callback for overall status updates */
+  onStatusChange?: OnStatusChange;
+  /** Callback before approval transaction */
+  onApprovalRequest?: () => void;
+  /** Callback before main transaction */
+  onTransactionRequest?: () => void;
+  /** Allow infinite token approval */
+  infiniteApproval?: boolean;
+}
+```
+
+### Properties
+
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| `quote` | `Quote` | Yes | The quote to execute |
+| `signer` | `TransactionSigner` | Yes | Wallet signer for transactions |
+| `onStepChange` | `OnStepChange` | No | Callback when a step's status changes |
+| `onStatusChange` | `OnStatusChange` | No | Callback for overall execution status |
+| `onApprovalRequest` | `() => void` | No | Called before approval transaction |
+| `onTransactionRequest` | `() => void` | No | Called before main transaction |
+| `infiniteApproval` | `boolean` | No | Set to `true` for max approval (saves gas on future txs) |
+
+---
+
+## ExecutionResult
+
+Result of executing a bridge transaction.
+
+```typescript
+interface ExecutionResult {
+  /** Unique execution ID for status tracking */
+  executionId: string;
+  /** Overall status */
+  status: 'pending' | 'executing' | 'completed' | 'failed';
+  /** All step statuses */
+  steps: StepStatus[];
+  /** Final bridge transaction hash */
+  txHash?: string;
+  /** Input amount that was bridged */
+  fromAmount?: string;
+  /** Output amount received (or expected) */
+  toAmount?: string;
+  /** Received amount after bridge completion */
+  receivedAmount?: string;
+  /** Deposit transaction hash (if auto-deposit was enabled) */
+  depositTxHash?: string | null;
+  /** Error (if failed) */
+  error?: Error;
+}
+```
+
+---
+
+## TransactionSigner
+
+Interface for transaction signing, compatible with viem and ethers.
+
+```typescript
+interface TransactionSigner {
+  /** Sign and send a transaction */
+  sendTransaction: (request: TransactionRequestData) => Promise<string>;
+  /** Get the signer's address */
+  getAddress: () => Promise<string>;
+  /** Get the current chain ID */
+  getChainId: () => Promise<number>;
+}
+```
+
+### Example Implementation (viem)
+
+```typescript
+import { createWalletClient, custom } from 'viem';
+
+const walletClient = createWalletClient({
+  chain: mainnet,
+  transport: custom(window.ethereum),
+});
+
+const signer: TransactionSigner = {
+  sendTransaction: async (request) => {
+    return walletClient.sendTransaction({
+      to: request.to as `0x${string}`,
+      data: request.data as `0x${string}`,
+      value: BigInt(request.value),
+      gas: request.gasLimit ? BigInt(request.gasLimit) : undefined,
+    });
+  },
+  getAddress: async () => {
+    const [address] = await walletClient.getAddresses();
+    return address;
+  },
+  getChainId: async () => {
+    return walletClient.getChainId();
+  },
+};
+```
+
+---
+
+## TransactionRequestData
+
+Data structure for transaction requests.
+
+```typescript
+interface TransactionRequestData {
+  to: string;
+  data: string;
+  value: string;
+  gasLimit?: string;
+  gasPrice?: string;
+  chainId: number;
+}
+```
+
+### Properties
+
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| `to` | `string` | Yes | Destination contract address |
+| `data` | `string` | Yes | Encoded transaction data |
+| `value` | `string` | Yes | Native token value to send (in wei) |
+| `gasLimit` | `string` | No | Gas limit for the transaction |
+| `gasPrice` | `string` | No | Gas price in wei |
+| `chainId` | `number` | Yes | Chain ID for the transaction |

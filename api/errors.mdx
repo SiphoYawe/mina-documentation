@@ -1,0 +1,481 @@
+---
+title: "Error Classes"
+description: "SDK error types with recovery actions and type guards"
+---
+
+# Error Classes
+
+The Mina SDK provides typed error classes with recovery guidance for handling failures gracefully.
+
+## MinaError (Base Class)
+
+Abstract base class for all SDK errors. Provides structured error information including recovery actions.
+
+```typescript
+abstract class MinaError extends Error {
+  /** Unique error code for programmatic handling */
+  abstract readonly code: string;
+  /** Whether this error is recoverable via retry */
+  abstract readonly recoverable: boolean;
+  /** The step where this error occurred */
+  readonly step?: StepType;
+  /** User-friendly error message for display */
+  readonly userMessage: string;
+  /** Suggested recovery action */
+  readonly recoveryAction: RecoveryAction;
+  /** Additional details for debugging */
+  readonly details?: Record<string, unknown>;
+}
+```
+
+### Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `code` | `string` | Unique error code (e.g., `'INSUFFICIENT_BALANCE'`) |
+| `recoverable` | `boolean` | `true` if the error can potentially be resolved by retrying |
+| `step` | `StepType` | Which step failed: `'approval'`, `'swap'`, `'bridge'`, or `'deposit'` |
+| `userMessage` | `string` | Human-readable message safe to display to users |
+| `recoveryAction` | `RecoveryAction` | Suggested action to resolve the error |
+| `details` | `Record<string, unknown>` | Additional context for debugging |
+
+---
+
+## RecoveryAction
+
+Enum-like type for recovery action suggestions.
+
+```typescript
+type RecoveryAction =
+  | 'retry'
+  | 'add_funds'
+  | 'increase_slippage'
+  | 'try_different_amount'
+  | 'try_again'
+  | 'fetch_new_quote'
+  | 'contact_support'
+  | 'switch_network'
+  | 'check_allowance'
+  | 'adjust_slippage';
+```
+
+| Action | Description |
+|--------|-------------|
+| `'retry'` | Retry the same operation |
+| `'add_funds'` | User needs to add more tokens |
+| `'increase_slippage'` | Increase slippage tolerance |
+| `'try_different_amount'` | Try a different bridge amount |
+| `'try_again'` | Start the flow over |
+| `'fetch_new_quote'` | Get a fresh quote |
+| `'contact_support'` | Escalate to support |
+| `'switch_network'` | Switch to the correct network |
+| `'check_allowance'` | Check token approval |
+| `'adjust_slippage'` | Adjust slippage to valid range |
+
+---
+
+## Error Classes
+
+### InsufficientBalanceError
+
+User does not have enough tokens for the transaction.
+
+```typescript
+class InsufficientBalanceError extends MinaError {
+  readonly code = 'INSUFFICIENT_BALANCE';
+  readonly recoverable = false;
+  readonly required: string;   // Amount needed
+  readonly available: string;  // Amount user has
+  readonly token: string;      // Token symbol
+}
+```
+
+**Recovery Action:** `'add_funds'`
+
+### NoRouteFoundError
+
+No bridge route available for the requested path.
+
+```typescript
+class NoRouteFoundError extends MinaError {
+  readonly code = 'NO_ROUTE_FOUND';
+  readonly recoverable = false;
+  readonly fromChainId: number;
+  readonly toChainId: number;
+  readonly fromToken: string;
+  readonly toToken: string;
+}
+```
+
+**Recovery Action:** `'try_different_amount'`
+
+### SlippageExceededError
+
+Price moved beyond the specified slippage tolerance.
+
+```typescript
+class SlippageExceededError extends MinaError {
+  readonly code = 'SLIPPAGE_EXCEEDED';
+  readonly recoverable = true;
+  readonly expectedAmount: string;
+  readonly actualAmount: string;
+  readonly slippageTolerance: number;
+}
+```
+
+**Recovery Action:** `'increase_slippage'`
+
+### InvalidSlippageError
+
+Slippage value is outside the valid range (0.01% - 5.0%).
+
+```typescript
+class InvalidSlippageError extends MinaError {
+  readonly code = 'INVALID_SLIPPAGE';
+  readonly recoverable = false;
+  readonly provided: number;
+  readonly min: number;
+  readonly max: number;
+}
+```
+
+**Recovery Action:** `'adjust_slippage'`
+
+### TransactionFailedError
+
+On-chain transaction reverted.
+
+```typescript
+class TransactionFailedError extends MinaError {
+  readonly code = 'TRANSACTION_FAILED';
+  readonly recoverable = true;
+  readonly txHash?: string;
+  readonly chainId: number;
+  readonly reason?: string;
+}
+```
+
+**Recovery Action:** `'retry'`
+
+### UserRejectedError
+
+User rejected the wallet prompt or transaction.
+
+```typescript
+class UserRejectedError extends MinaError {
+  readonly code = 'USER_REJECTED';
+  readonly recoverable = false;
+}
+```
+
+**Recovery Action:** `'try_again'`
+
+### NetworkError
+
+RPC or API communication failed.
+
+```typescript
+class NetworkError extends MinaError {
+  readonly code = 'NETWORK_ERROR';
+  readonly recoverable = true;
+  readonly endpoint?: string;
+  readonly statusCode?: number;
+}
+```
+
+**Recovery Action:** `'retry'`
+
+### DepositFailedError
+
+Hyperliquid L1 deposit step failed.
+
+```typescript
+class DepositFailedError extends MinaError {
+  readonly code = 'DEPOSIT_FAILED';
+  readonly recoverable = true;
+  readonly bridgeTxHash?: string;
+  readonly depositTxHash?: string;
+  readonly amount: string;
+}
+```
+
+**Recovery Action:** `'retry'`
+
+### ChainFetchError
+
+Failed to fetch chain data from API.
+
+```typescript
+class ChainFetchError extends Error {
+  readonly code = 'CHAIN_FETCH_FAILED';
+  readonly recoveryAction = 'retry';
+  readonly cachedAvailable: boolean;
+}
+```
+
+### MaxRetriesExceededError
+
+Maximum retry attempts have been exhausted.
+
+```typescript
+class MaxRetriesExceededError extends MinaError {
+  readonly code = 'MAX_RETRIES_EXCEEDED';
+  readonly recoverable = false;
+  readonly previousErrors: Error[];
+  readonly executionId: string;
+}
+```
+
+**Recovery Action:** `'contact_support'`
+
+### QuoteExpiredError
+
+The quote has expired and is no longer valid.
+
+```typescript
+class QuoteExpiredError extends MinaError {
+  readonly code = 'QUOTE_EXPIRED';
+  readonly recoverable = true;
+  readonly quoteId: string;
+  readonly expiredAt: number;
+}
+```
+
+**Recovery Action:** `'fetch_new_quote'`
+
+### TokenFetchError
+
+Failed to fetch token data from API.
+
+```typescript
+class TokenFetchError extends Error {
+  readonly code = 'TOKEN_FETCH_FAILED';
+  readonly recoveryAction = 'retry';
+  readonly cachedAvailable: boolean;
+  readonly chainId?: number;
+}
+```
+
+### BalanceFetchError
+
+Failed to fetch balance data from API.
+
+```typescript
+class BalanceFetchError extends Error {
+  readonly code = 'BALANCE_FETCH_FAILED';
+  readonly recoveryAction = 'retry';
+  readonly cachedAvailable: boolean;
+  readonly chainId?: number;
+}
+```
+
+### InvalidAddressError
+
+Invalid Ethereum address format.
+
+```typescript
+class InvalidAddressError extends Error {
+  readonly code = 'INVALID_ADDRESS';
+  readonly address: string;
+}
+```
+
+### QuoteFetchError
+
+Failed to fetch quote from API.
+
+```typescript
+class QuoteFetchError extends MinaError {
+  readonly code = 'QUOTE_FETCH_FAILED';
+  readonly recoverable = true;
+}
+```
+
+**Recovery Action:** `'retry'`
+
+### MinimumDepositError
+
+Deposit amount is below the minimum (5 USDC).
+
+```typescript
+class MinimumDepositError extends MinaError {
+  readonly code = 'MINIMUM_DEPOSIT_NOT_MET';
+  readonly recoverable = false;
+  readonly minimumAmount: string;
+  readonly requestedAmount: string;
+}
+```
+
+**Recovery Action:** `'try_different_amount'`
+
+### InsufficientGasError
+
+Not enough native token for gas fees.
+
+```typescript
+class InsufficientGasError extends MinaError {
+  readonly code = 'INSUFFICIENT_GAS';
+  readonly recoverable = false;
+  readonly required: string;
+  readonly available: string;
+}
+```
+
+**Recovery Action:** `'add_funds'`
+
+### DepositTransactionError
+
+Deposit transaction failed on-chain.
+
+```typescript
+class DepositTransactionError extends MinaError {
+  readonly code = 'DEPOSIT_TRANSACTION_FAILED';
+  readonly recoverable = true;
+  readonly txHash?: string;
+  readonly reason?: string;
+}
+```
+
+**Recovery Action:** `'retry'`
+
+### L1MonitorCancelledError
+
+L1 deposit monitoring was cancelled.
+
+```typescript
+// Typically thrown when monitoring times out or is manually cancelled
+```
+
+### InvalidL1AddressError
+
+Invalid L1 address for deposit.
+
+```typescript
+// Thrown when the L1 address format is invalid
+```
+
+---
+
+## Type Guards
+
+Type guard functions for checking error types.
+
+```typescript
+// Check if error is any MinaError
+function isMinaError(error: unknown): error is MinaError;
+
+// Check if error is recoverable
+function isRecoverableError(error: unknown): boolean;
+
+// Specific error type guards
+function isInsufficientBalanceError(error: unknown): error is InsufficientBalanceError;
+function isNoRouteFoundError(error: unknown): error is NoRouteFoundError;
+function isSlippageExceededError(error: unknown): error is SlippageExceededError;
+function isInvalidSlippageError(error: unknown): error is InvalidSlippageError;
+function isTransactionFailedError(error: unknown): error is TransactionFailedError;
+function isUserRejectedError(error: unknown): error is UserRejectedError;
+function isNetworkError(error: unknown): error is NetworkError;
+function isDepositFailedError(error: unknown): error is DepositFailedError;
+function isMaxRetriesExceededError(error: unknown): error is MaxRetriesExceededError;
+function isQuoteExpiredError(error: unknown): error is QuoteExpiredError;
+```
+
+---
+
+## Usage Examples
+
+### Basic Error Handling
+
+```typescript
+import {
+  isMinaError,
+  isInsufficientBalanceError,
+  isUserRejectedError
+} from '@mina-bridge/sdk';
+
+try {
+  const result = await mina.execute({ quote, signer });
+} catch (error) {
+  if (isMinaError(error)) {
+    // Display user-friendly message
+    showError(error.userMessage);
+
+    // Handle specific recovery actions
+    switch (error.recoveryAction) {
+      case 'add_funds':
+        showDepositModal();
+        break;
+      case 'fetch_new_quote':
+        await refreshQuote();
+        break;
+      case 'retry':
+        await retryExecution();
+        break;
+    }
+  }
+}
+```
+
+### Specific Error Handling
+
+```typescript
+try {
+  await mina.execute({ quote, signer });
+} catch (error) {
+  if (isUserRejectedError(error)) {
+    // User cancelled - just reset UI
+    resetUI();
+    return;
+  }
+
+  if (isInsufficientBalanceError(error)) {
+    showError(`Need ${error.required} ${error.token}, have ${error.available}`);
+    return;
+  }
+
+  if (isSlippageExceededError(error)) {
+    const increase = confirm('Slippage exceeded. Increase tolerance?');
+    if (increase) {
+      await retryWithHigherSlippage();
+    }
+    return;
+  }
+
+  // Unknown error
+  console.error('Unexpected error:', error);
+  showError('Something went wrong. Please try again.');
+}
+```
+
+### Checking Recoverability
+
+```typescript
+import { isRecoverableError } from '@mina-bridge/sdk';
+
+try {
+  await mina.execute({ quote, signer });
+} catch (error) {
+  if (isRecoverableError(error)) {
+    showRetryButton();
+  } else {
+    showContactSupport();
+  }
+}
+```
+
+### Error Normalization
+
+The SDK provides a helper to normalize any error to a MinaError:
+
+```typescript
+import { normalizeError } from '@mina-bridge/sdk';
+
+try {
+  // Some operation that might throw
+} catch (error) {
+  const minaError = normalizeError(error, 'bridge');
+  // Now you can safely access .code, .userMessage, etc.
+  console.log(minaError.code);
+  console.log(minaError.userMessage);
+}
+```

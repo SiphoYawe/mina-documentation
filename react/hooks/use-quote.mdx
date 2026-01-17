@@ -1,0 +1,369 @@
+---
+title: "useQuote"
+description: "React hook for fetching bridge quotes with automatic debouncing"
+---
+
+# useQuote
+
+The `useQuote` hook fetches bridge quotes with built-in debouncing, automatic refetching when parameters change, and proper loading state management.
+
+## Import
+
+```typescript
+import { useQuote } from '@siphoyawe/mina-sdk/react';
+```
+
+## Signature
+
+```typescript
+function useQuote(params: UseQuoteParams): UseQuoteReturn
+```
+
+## Parameters
+
+### UseQuoteParams
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `fromChain` | `number` | Yes | - | Source chain ID |
+| `toChain` | `number` | Yes | - | Destination chain ID (typically 999 for HyperEVM) |
+| `fromToken` | `string` | Yes | - | Source token contract address |
+| `toToken` | `string` | Yes | - | Destination token contract address |
+| `amount` | `string` | Yes | - | Amount in smallest unit (wei) |
+| `fromAddress` | `string` | Yes | - | User's wallet address |
+| `slippageTolerance` | `number` | No | SDK default | Slippage tolerance (e.g., 0.5 for 0.5%) |
+| `routePreference` | `RoutePreference` | No | `'recommended'` | `'recommended'` \| `'fastest'` \| `'cheapest'` |
+| `enabled` | `boolean` | No | `true` | Enable/disable automatic fetching |
+
+## Returns
+
+### UseQuoteReturn
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `quote` | `Quote \| null` | The fetched quote, or `null` if not available |
+| `isLoading` | `boolean` | `true` while a quote request is in flight |
+| `error` | `Error \| null` | Any error that occurred during fetch |
+| `refetch` | `() => Promise<void>` | Manually trigger a new quote request |
+
+## Features
+
+- **500ms debounce** - Prevents excessive API calls when parameters change rapidly
+- **Auto-refetch** - Automatically fetches a new quote when any parameter changes
+- **Stale-while-revalidate** - Keeps the previous quote visible during refetch
+- **Controlled fetching** - Use `enabled` to pause/resume automatic fetching
+
+## Basic Usage
+
+```typescript
+'use client';
+
+import { useQuote } from '@siphoyawe/mina-sdk/react';
+
+function QuoteDisplay() {
+  const { quote, isLoading, error } = useQuote({
+    fromChain: 42161,        // Arbitrum
+    toChain: 999,            // HyperEVM
+    fromToken: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831', // USDC on Arbitrum
+    toToken: '0xb88339cb7199b77e23db6e890353e22632ba630f',   // USDC on HyperEVM
+    amount: '1000000000',    // 1000 USDC (6 decimals)
+    fromAddress: '0x...',    // User's wallet
+  });
+
+  if (isLoading) return <div>Getting quote...</div>;
+  if (error) return <div>Error: {error.message}</div>;
+  if (!quote) return <div>Enter amount to get quote</div>;
+
+  return (
+    <div>
+      <p>You will receive: {quote.toAmount}</p>
+      <p>Estimated fees: ${quote.fees.totalUsd.toFixed(2)}</p>
+    </div>
+  );
+}
+```
+
+## Form Integration
+
+Integrate with form inputs for a complete bridge interface:
+
+```typescript
+'use client';
+
+import { useState } from 'react';
+import { useQuote } from '@siphoyawe/mina-sdk/react';
+import { parseUnits } from 'viem';
+
+function BridgeForm({ walletAddress }: { walletAddress: string }) {
+  const [amount, setAmount] = useState('');
+  const [fromChain, setFromChain] = useState(42161);
+  const [slippage, setSlippage] = useState(0.5);
+
+  // Convert display amount to wei
+  const amountWei = amount ? parseUnits(amount, 6).toString() : '';
+
+  const { quote, isLoading, error, refetch } = useQuote({
+    fromChain,
+    toChain: 999,
+    fromToken: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
+    toToken: '0xb88339cb7199b77e23db6e890353e22632ba630f',
+    amount: amountWei,
+    fromAddress: walletAddress,
+    slippageTolerance: slippage,
+    routePreference: 'recommended',
+  });
+
+  return (
+    <div>
+      <input
+        type="number"
+        value={amount}
+        onChange={(e) => setAmount(e.target.value)}
+        placeholder="Enter amount"
+      />
+
+      <select
+        value={fromChain}
+        onChange={(e) => setFromChain(Number(e.target.value))}
+      >
+        <option value={42161}>Arbitrum</option>
+        <option value={8453}>Base</option>
+        <option value={10}>Optimism</option>
+      </select>
+
+      <select
+        value={slippage}
+        onChange={(e) => setSlippage(Number(e.target.value))}
+      >
+        <option value={0.1}>0.1%</option>
+        <option value={0.5}>0.5%</option>
+        <option value={1}>1%</option>
+      </select>
+
+      {isLoading && <p>Fetching quote...</p>}
+      {error && <p className="error">{error.message}</p>}
+
+      {quote && (
+        <div className="quote-details">
+          <p>Receive: {quote.toAmountFormatted} {quote.toToken.symbol}</p>
+          <p>Rate: 1 {quote.fromToken.symbol} = {quote.rate} {quote.toToken.symbol}</p>
+          <p>Fee: ${quote.fees.totalUsd.toFixed(2)}</p>
+          <p>Time: ~{quote.estimatedTime}s</p>
+          <button onClick={refetch}>Refresh Quote</button>
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+## Conditional Fetching
+
+Use the `enabled` parameter to control when quotes are fetched:
+
+```typescript
+'use client';
+
+import { useQuote } from '@siphoyawe/mina-sdk/react';
+
+function ConditionalQuote({
+  amount,
+  fromAddress,
+  isWalletConnected
+}: {
+  amount: string;
+  fromAddress: string;
+  isWalletConnected: boolean;
+}) {
+  const { quote, isLoading } = useQuote({
+    fromChain: 42161,
+    toChain: 999,
+    fromToken: '0x...',
+    toToken: '0x...',
+    amount,
+    fromAddress,
+    // Only fetch when wallet is connected and amount is valid
+    enabled: isWalletConnected && amount !== '' && amount !== '0',
+  });
+
+  if (!isWalletConnected) {
+    return <p>Connect wallet to see quote</p>;
+  }
+
+  if (!amount) {
+    return <p>Enter an amount</p>;
+  }
+
+  if (isLoading) {
+    return <p>Loading...</p>;
+  }
+
+  return quote ? (
+    <p>Receive: {quote.toAmountFormatted}</p>
+  ) : null;
+}
+```
+
+## Route Preferences
+
+Choose how routes are selected:
+
+```typescript
+'use client';
+
+import { useState } from 'react';
+import { useQuote, type RoutePreference } from '@siphoyawe/mina-sdk/react';
+
+function RouteSelector() {
+  const [preference, setPreference] = useState<RoutePreference>('recommended');
+
+  const { quote } = useQuote({
+    fromChain: 42161,
+    toChain: 999,
+    fromToken: '0x...',
+    toToken: '0x...',
+    amount: '1000000000',
+    fromAddress: '0x...',
+    routePreference: preference,
+  });
+
+  return (
+    <div>
+      <div className="route-options">
+        <button
+          onClick={() => setPreference('recommended')}
+          className={preference === 'recommended' ? 'active' : ''}
+        >
+          Recommended
+        </button>
+        <button
+          onClick={() => setPreference('fastest')}
+          className={preference === 'fastest' ? 'active' : ''}
+        >
+          Fastest
+        </button>
+        <button
+          onClick={() => setPreference('cheapest')}
+          className={preference === 'cheapest' ? 'active' : ''}
+        >
+          Cheapest
+        </button>
+      </div>
+
+      {quote && (
+        <div>
+          <p>Route: {quote.route.provider}</p>
+          <p>Time: ~{quote.estimatedTime}s</p>
+          <p>Fee: ${quote.fees.totalUsd.toFixed(2)}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+## Manual Refetch
+
+Use `refetch` to manually trigger a new quote:
+
+```typescript
+'use client';
+
+import { useQuote } from '@siphoyawe/mina-sdk/react';
+
+function QuoteWithRefresh() {
+  const { quote, isLoading, refetch } = useQuote({
+    fromChain: 42161,
+    toChain: 999,
+    fromToken: '0x...',
+    toToken: '0x...',
+    amount: '1000000000',
+    fromAddress: '0x...',
+  });
+
+  return (
+    <div>
+      {quote && <p>Receive: {quote.toAmountFormatted}</p>}
+
+      <button
+        onClick={refetch}
+        disabled={isLoading}
+      >
+        {isLoading ? 'Refreshing...' : 'Refresh Quote'}
+      </button>
+    </div>
+  );
+}
+```
+
+<Note>
+Manual `refetch` bypasses the debounce timer and fetches immediately.
+</Note>
+
+## Best Practices
+
+<Note>
+**Performance and UX Tips:**
+
+1. **Debouncing is automatic** - The hook waits 500ms after the last parameter change before fetching. Do not add your own debounce.
+
+2. **Handle all states** - Always render appropriate UI for loading, error, and empty states.
+
+3. **Use `enabled` wisely** - Disable fetching when the user hasn't entered valid input yet.
+
+4. **Validate amounts** - Ensure the amount is a valid positive number before enabling the hook.
+
+5. **Keep quotes fresh** - Quotes expire. Consider auto-refreshing or prompting users to refresh before execution.
+</Note>
+
+## Error Handling
+
+```typescript
+'use client';
+
+import { useQuote } from '@siphoyawe/mina-sdk/react';
+
+function RobustQuoteDisplay() {
+  const { quote, isLoading, error, refetch } = useQuote({
+    fromChain: 42161,
+    toChain: 999,
+    fromToken: '0x...',
+    toToken: '0x...',
+    amount: '1000000000',
+    fromAddress: '0x...',
+  });
+
+  if (error) {
+    return (
+      <div className="error-state">
+        <p>Failed to get quote</p>
+        <p className="error-message">{error.message}</p>
+        <button onClick={refetch}>Try Again</button>
+      </div>
+    );
+  }
+
+  // Note: Previous quote is preserved during refetch (stale-while-revalidate)
+  return (
+    <div className={isLoading ? 'opacity-50' : ''}>
+      {quote ? (
+        <p>Receive: {quote.toAmountFormatted}</p>
+      ) : (
+        <p>Enter details to see quote</p>
+      )}
+      {isLoading && <span className="loading-indicator" />}
+    </div>
+  );
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="useTokenBalance" icon="wallet" href="/react/hooks/use-token-balance">
+    Track wallet token balances
+  </Card>
+  <Card title="useTransactionStatus" icon="clock" href="/react/hooks/use-transaction-status">
+    Monitor transaction progress
+  </Card>
+</CardGroup>

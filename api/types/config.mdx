@@ -1,0 +1,199 @@
+---
+title: "Configuration Types"
+description: "TypeScript type definitions for SDK configuration"
+---
+
+# Configuration Types
+
+Types for configuring the Mina SDK client and bridge operations.
+
+## MinaConfig
+
+Main configuration interface for initializing the Mina client.
+
+```typescript
+interface MinaConfig {
+  /** Unique identifier for the integrator */
+  integrator: string;
+  /** Custom RPC URLs by chain ID */
+  rpcUrls?: Record<number, string>;
+  /** Enable automatic deposit to Hyperliquid L1 after bridge */
+  autoDeposit?: boolean;
+  /** Default slippage tolerance (0.005 = 0.5%) */
+  defaultSlippage?: number;
+}
+```
+
+### Properties
+
+| Property | Type | Required | Default | Description |
+|----------|------|----------|---------|-------------|
+| `integrator` | `string` | Yes | - | Unique identifier for your application. Used for tracking and analytics. |
+| `rpcUrls` | `Record<number, string>` | No | - | Custom RPC endpoints keyed by chain ID. Overrides default providers. |
+| `autoDeposit` | `boolean` | No | `true` | Automatically deposit bridged USDC to Hyperliquid L1 trading account. |
+| `defaultSlippage` | `number` | No | `0.005` | Default slippage tolerance in decimal format (0.005 = 0.5%). |
+
+### Example
+
+```typescript
+import { Mina } from '@mina-bridge/sdk';
+
+const mina = new Mina({
+  integrator: 'my-dapp',
+  autoDeposit: true,
+  defaultSlippage: 0.005,
+  rpcUrls: {
+    1: 'https://my-ethereum-rpc.com',
+    42161: 'https://my-arbitrum-rpc.com',
+  },
+});
+```
+
+---
+
+## SlippagePreset
+
+Predefined slippage tolerance values for common use cases.
+
+```typescript
+type SlippagePreset = 0.1 | 0.5 | 1.0;
+```
+
+### Values
+
+| Value | Description |
+|-------|-------------|
+| `0.1` | Low slippage (0.1%) - Best for stablecoin pairs |
+| `0.5` | Default slippage (0.5%) - Recommended for most trades |
+| `1.0` | High slippage (1.0%) - For volatile markets or large trades |
+
+### Example
+
+```typescript
+import { SLIPPAGE_CONSTRAINTS } from '@mina-bridge/sdk';
+
+// Use preset values
+const slippage: SlippagePreset = 0.5;
+
+// Check available presets
+console.log(SLIPPAGE_CONSTRAINTS.PRESETS); // [0.1, 0.5, 1.0]
+```
+
+---
+
+## RoutePreference
+
+Route selection preference for bridge quotes.
+
+```typescript
+type RoutePreference = 'recommended' | 'fastest' | 'cheapest';
+```
+
+### Values
+
+| Value | Description |
+|-------|-------------|
+| `'recommended'` | Balance of speed and cost (default). LI.FI's recommended route. |
+| `'fastest'` | Prioritize routes with lowest estimated execution time. |
+| `'cheapest'` | Prioritize routes with lowest total fees. |
+
+### Example
+
+```typescript
+const quote = await mina.getQuote({
+  fromChainId: 1,
+  toChainId: 999,
+  fromToken: USDC_ADDRESS,
+  toToken: HYPEREVM_USDC_ADDRESS,
+  fromAmount: '1000000000',
+  fromAddress: walletAddress,
+  routePreference: 'fastest',
+});
+```
+
+---
+
+## SLIPPAGE_CONSTRAINTS
+
+Constant object containing slippage validation rules and defaults.
+
+```typescript
+const SLIPPAGE_CONSTRAINTS = {
+  /** Minimum slippage tolerance: 0.01% */
+  MIN: 0.01,
+  /** Maximum slippage tolerance: 5.0% */
+  MAX: 5.0,
+  /** Default slippage tolerance: 0.5% */
+  DEFAULT: 0.5,
+  /** Preset slippage values */
+  PRESETS: [0.1, 0.5, 1.0] as const,
+} as const;
+```
+
+### Properties
+
+| Property | Type | Value | Description |
+|----------|------|-------|-------------|
+| `MIN` | `number` | `0.01` | Minimum allowed slippage (0.01%) |
+| `MAX` | `number` | `5.0` | Maximum allowed slippage (5.0%) |
+| `DEFAULT` | `number` | `0.5` | Default slippage value (0.5%) |
+| `PRESETS` | `readonly [0.1, 0.5, 1.0]` | `[0.1, 0.5, 1.0]` | Common preset values |
+
+### Usage
+
+```typescript
+import { SLIPPAGE_CONSTRAINTS } from '@mina-bridge/sdk';
+
+function validateSlippage(value: number): boolean {
+  return value >= SLIPPAGE_CONSTRAINTS.MIN
+      && value <= SLIPPAGE_CONSTRAINTS.MAX;
+}
+
+// Render slippage options
+SLIPPAGE_CONSTRAINTS.PRESETS.map(preset => (
+  <button key={preset}>{preset}%</button>
+));
+```
+
+---
+
+## RouteComparison
+
+Data for comparing alternative routes.
+
+```typescript
+interface RouteComparison {
+  /** Route preference classification */
+  type: RoutePreference;
+  /** Estimated execution time in seconds */
+  estimatedTime: number;
+  /** Total fees in USD */
+  totalFees: string;
+  /** Expected output amount */
+  outputAmount: string;
+  /** Route ID for reference */
+  routeId: string;
+}
+```
+
+### Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `type` | `RoutePreference` | Classification of this route (fastest, cheapest, recommended) |
+| `estimatedTime` | `number` | Estimated execution time in seconds |
+| `totalFees` | `string` | Total fees formatted in USD (e.g., "2.50") |
+| `outputAmount` | `string` | Expected output amount in smallest units |
+| `routeId` | `string` | Unique identifier for this route |
+
+### Example
+
+```typescript
+const quote = await mina.getQuote(params);
+
+if (quote.alternativeRoutes) {
+  quote.alternativeRoutes.forEach(alt => {
+    console.log(`${alt.type}: ${alt.estimatedTime}s, $${alt.totalFees}`);
+  });
+}
+```

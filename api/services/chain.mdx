@@ -1,0 +1,312 @@
+---
+title: 'Chain Service'
+description: 'Chain discovery and management service'
+---
+
+The Chain Service provides functions for fetching and caching supported blockchain networks. It uses the LI.FI API with built-in caching (30 minute TTL) and fallback support.
+
+## Exports
+
+```typescript
+import {
+  getChains,
+  getDestinationChains,
+  getChainsByRoutes,
+  getChainById,
+  invalidateChainCache,
+  createChainCache,
+  ChainCache,
+  HYPEREVM_CHAIN,
+} from '@mina-bridge/sdk/services/chain';
+```
+
+---
+
+## Functions
+
+### getChains(cache?)
+
+Fetch all supported source chains for bridging.
+
+```typescript
+async function getChains(cache?: ChainCache): Promise<ChainsResponse>
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `cache` | `ChainCache` | No | Optional cache instance (uses default if not provided) |
+
+**Returns:** `ChainsResponse`
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `chains` | `Chain[]` | Array of supported chains |
+| `isStale` | `boolean` | Whether data is from stale cache |
+| `cachedAt` | `number \| null` | Timestamp when data was cached |
+
+**Throws:** `ChainFetchError` if API fails and no cache available.
+
+**Example:**
+
+```typescript
+const response = await getChains();
+console.log(`Found ${response.chains.length} chains`);
+
+if (response.isStale) {
+  console.warn('Using cached data from', new Date(response.cachedAt));
+}
+
+// Filter EVM chains
+const evmChains = response.chains.filter(chain => chain.isEvm);
+```
+
+---
+
+### getDestinationChains()
+
+Get destination chains (currently only HyperEVM).
+
+```typescript
+function getDestinationChains(): Chain[]
+```
+
+**Returns:** Array containing the HyperEVM chain.
+
+**Example:**
+
+```typescript
+const destinations = getDestinationChains();
+const hyperevm = destinations[0];
+
+console.log(hyperevm.name);         // "HyperEVM"
+console.log(hyperevm.id);           // 999
+console.log(hyperevm.nativeToken.symbol); // "HYPE"
+```
+
+---
+
+### getChainsByRoutes(toChainId?, cache?)
+
+Get chains that have valid bridge routes to a specific destination.
+
+```typescript
+async function getChainsByRoutes(
+  toChainId?: number,
+  cache?: ChainCache
+): Promise<Chain[]>
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `toChainId` | `number` | `999` | Destination chain ID (HyperEVM) |
+| `cache` | `ChainCache` | - | Optional cache instance |
+
+**Example:**
+
+```typescript
+// Get chains that can bridge to HyperEVM
+const bridgeableChains = await getChainsByRoutes();
+
+console.log(`${bridgeableChains.length} chains can bridge to HyperEVM`);
+
+bridgeableChains.forEach(chain => {
+  console.log(`- ${chain.name} (${chain.id})`);
+});
+```
+
+---
+
+### getChainById(chainId, cache?)
+
+Get a specific chain by its ID.
+
+```typescript
+async function getChainById(
+  chainId: number,
+  cache?: ChainCache
+): Promise<Chain | undefined>
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `chainId` | `number` | Yes | Chain ID to find |
+| `cache` | `ChainCache` | No | Optional cache instance |
+
+**Example:**
+
+```typescript
+const ethereum = await getChainById(1);
+console.log(ethereum?.name); // "Ethereum"
+
+const arbitrum = await getChainById(42161);
+console.log(arbitrum?.name); // "Arbitrum One"
+
+// Check HyperEVM
+const hyperevm = await getChainById(999);
+console.log(hyperevm?.name); // "HyperEVM"
+```
+
+---
+
+### invalidateChainCache(cache?)
+
+Manually invalidate the chain cache.
+
+```typescript
+function invalidateChainCache(cache?: ChainCache): void
+```
+
+**Example:**
+
+```typescript
+// Force refresh on next request
+invalidateChainCache();
+
+// With custom cache
+const myCache = createChainCache();
+invalidateChainCache(myCache);
+```
+
+---
+
+### createChainCache()
+
+Factory function to create a new cache instance.
+
+```typescript
+function createChainCache(): ChainCache
+```
+
+**Example:**
+
+```typescript
+// Create isolated cache instance
+const myCache = createChainCache();
+
+// Use with functions
+const chains = await getChains(myCache);
+```
+
+---
+
+## Types
+
+### ChainsResponse
+
+```typescript
+interface ChainsResponse {
+  /** Array of chain data */
+  chains: Chain[];
+  /** Whether the data is from stale cache */
+  isStale: boolean;
+  /** Timestamp when data was cached (null if fresh from API) */
+  cachedAt: number | null;
+}
+```
+
+### Chain
+
+```typescript
+interface Chain {
+  /** Chain ID (e.g., 1 for Ethereum mainnet) */
+  id: number;
+  /** Chain key/slug (e.g., "eth", "arb") */
+  key: string;
+  /** Human-readable chain name */
+  name: string;
+  /** URL to chain logo image */
+  logoUrl: string;
+  /** Native gas token for the chain */
+  nativeToken: Token;
+  /** Whether this is an EVM-compatible chain */
+  isEvm: boolean;
+}
+```
+
+### ChainFetchError
+
+```typescript
+class ChainFetchError extends Error {
+  readonly code: 'CHAIN_FETCH_FAILED';
+  readonly recoveryAction: 'retry';
+  readonly cachedAvailable: boolean;
+}
+```
+
+---
+
+## Constants
+
+### HYPEREVM_CHAIN
+
+Pre-defined HyperEVM chain data.
+
+```typescript
+const HYPEREVM_CHAIN: Chain = {
+  id: 999,
+  key: 'hyperevm',
+  name: 'HyperEVM',
+  logoUrl: 'https://app.hyperliquid.xyz/icons/hyperliquid-logo.svg',
+  nativeToken: {
+    address: '0x0000000000000000000000000000000000000000',
+    symbol: 'HYPE',
+    name: 'HYPE',
+    decimals: 18,
+    logoUrl: 'https://app.hyperliquid.xyz/icons/hyperliquid-logo.svg',
+    chainId: 999,
+  },
+  isEvm: true,
+};
+```
+
+---
+
+## ChainCache Class
+
+The `ChainCache` class manages caching for chain data with a 30-minute TTL.
+
+### Methods
+
+```typescript
+class ChainCache {
+  /** Get cached chains if not expired */
+  getChains(): { data: Chain[]; isStale: boolean; cachedAt: number } | null;
+
+  /** Store chains in cache */
+  setChains(chains: Chain[]): void;
+
+  /** Get cached chain connections for a destination */
+  getConnectionsForDestination(toChainId: number): number[] | null;
+
+  /** Store chain connections */
+  setConnectionsForDestination(toChainId: number, chainIds: number[]): void;
+
+  /** Invalidate all cache entries */
+  invalidate(): void;
+
+  /** Check if cached chains exist (even if expired) */
+  hasCachedChains(): boolean;
+
+  /** Get chains even if expired (for fallback) */
+  getChainsStale(): { data: Chain[]; cachedAt: number } | null;
+}
+```
+
+### Example Usage
+
+```typescript
+const cache = createChainCache();
+
+// First request - fetches from API
+const response1 = await getChains(cache);
+console.log('Fresh data:', !response1.isStale);
+
+// Second request within 30 minutes - uses cache
+const response2 = await getChains(cache);
+console.log('Cached at:', new Date(response2.cachedAt));
+
+// Force refresh
+cache.invalidate();
+const response3 = await getChains(cache);
+console.log('Fresh after invalidate:', response3.cachedAt === null);
+```

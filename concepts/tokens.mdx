@@ -1,0 +1,254 @@
+---
+title: "Tokens"
+description: "Discover bridgeable tokens on supported chains"
+---
+
+# Tokens
+
+The Mina SDK provides token discovery to identify which tokens can be bridged from each chain to HyperEVM.
+
+## Overview
+
+Not all tokens on a chain can be bridged to HyperEVM. The SDK provides methods to discover tokens that have valid bridge routes, along with their metadata including prices and logos.
+
+## Token Methods
+
+### getTokens(chainId)
+
+Fetches all tokens available on a specific chain.
+
+```typescript
+import { Mina } from '@siphoyawe/mina-sdk';
+
+const mina = new Mina({ integrator: 'my-app' });
+
+// Get all tokens on Arbitrum
+const { tokens, isStale, cachedAt } = await mina.getTokens(42161);
+
+console.log(`Found ${tokens.length} tokens on Arbitrum`);
+tokens.forEach(token => {
+  console.log(`${token.symbol}: ${token.address}`);
+});
+```
+
+### getBridgeableTokens(chainId)
+
+Fetches only tokens that can be bridged to HyperEVM from a specific chain. This is the recommended method for building bridge UIs.
+
+```typescript
+// Get tokens that can actually be bridged to HyperEVM
+const { tokens } = await mina.getBridgeableTokens(42161);
+
+console.log(`Found ${tokens.length} bridgeable tokens`);
+tokens.forEach(token => {
+  console.log(`${token.symbol} - $${token.priceUsd?.toFixed(2) ?? 'N/A'}`);
+});
+```
+
+<Tip>
+Use `getBridgeableTokens()` instead of `getTokens()` when building your bridge UI. This ensures users only see tokens with valid bridge routes.
+</Tip>
+
+## Response Types
+
+### TokensResponse
+
+Both methods return a response with metadata:
+
+```typescript
+interface TokensResponse {
+  /** Array of token data */
+  tokens: Token[];
+  /** Whether the data is from stale cache */
+  isStale: boolean;
+  /** Timestamp when data was cached (null if fresh from API) */
+  cachedAt: number | null;
+}
+```
+
+### Token
+
+Each token object contains:
+
+```typescript
+interface Token {
+  /** Token contract address */
+  address: string;
+  /** Token symbol (e.g., "USDC") */
+  symbol: string;
+  /** Token name (e.g., "USD Coin") */
+  name: string;
+  /** Token decimals (e.g., 6 for USDC) */
+  decimals: number;
+  /** URL to token logo image */
+  logoUrl: string;
+  /** Current USD price (optional) */
+  priceUsd?: number;
+  /** Chain ID this token is on */
+  chainId: number;
+}
+```
+
+## Native Token Address
+
+The native gas token (ETH, MATIC, etc.) uses a special zero address:
+
+```typescript
+const NATIVE_TOKEN_ADDRESS = '0x0000000000000000000000000000000000000000';
+
+// Check if a token is the native token
+function isNativeToken(token: Token): boolean {
+  return token.address.toLowerCase() === NATIVE_TOKEN_ADDRESS;
+}
+
+// Get native token for a chain
+const { tokens } = await mina.getTokens(42161);
+const nativeToken = tokens.find(isNativeToken);
+console.log(nativeToken?.symbol); // "ETH" on Arbitrum
+```
+
+## Common Tokens
+
+### Source Chain Tokens
+
+Commonly bridged tokens from source chains:
+
+| Token | Symbol | Decimals | Common Chains |
+|-------|--------|----------|---------------|
+| USD Coin | USDC | 6 | Most chains |
+| Tether | USDT | 6 | Most chains |
+| Wrapped ETH | WETH | 18 | L2s |
+| Native ETH | ETH | 18 | All EVM chains |
+
+### HyperEVM Destination Tokens
+
+Tokens receivable on HyperEVM:
+
+| Token | Symbol | Address | Decimals |
+|-------|--------|---------|----------|
+| USDC | USDC | `0xb88339cb7199b77e23db6e890353e22632ba630f` | 6 |
+| HYPE | HYPE | `0x0000000000000000000000000000000000000000` | 18 |
+
+```typescript
+// HyperEVM USDC address
+const HYPEREVM_USDC_ADDRESS = '0xb88339cb7199b77e23db6e890353e22632ba630f';
+
+// Get destination tokens
+const destinationTokens = mina.getDestinationTokens();
+// Returns USDC and HYPE tokens on HyperEVM
+```
+
+## Example: Token Selector
+
+Build a token selector that shows bridgeable tokens with USD values:
+
+```typescript
+import { Mina, Token } from '@siphoyawe/mina-sdk';
+
+const mina = new Mina({ integrator: 'my-app' });
+
+interface TokenOption {
+  address: string;
+  symbol: string;
+  name: string;
+  logo: string;
+  priceUsd: number | null;
+  decimals: number;
+}
+
+async function getTokenOptions(chainId: number): Promise<TokenOption[]> {
+  const { tokens } = await mina.getBridgeableTokens(chainId);
+
+  return tokens.map(token => ({
+    address: token.address,
+    symbol: token.symbol,
+    name: token.name,
+    logo: token.logoUrl,
+    priceUsd: token.priceUsd ?? null,
+    decimals: token.decimals,
+  }));
+}
+
+// Usage
+const arbitrumTokens = await getTokenOptions(42161);
+// [
+//   { address: '0x...', symbol: 'USDC', name: 'USD Coin', ... },
+//   { address: '0x...', symbol: 'USDT', name: 'Tether', ... },
+//   ...
+// ]
+```
+
+## Example: Calculate USD Value
+
+Calculate the USD value of a token amount:
+
+```typescript
+function calculateUsdValue(
+  token: Token,
+  amountInSmallestUnit: string
+): number | null {
+  if (!token.priceUsd) return null;
+
+  const amount = BigInt(amountInSmallestUnit);
+  const divisor = BigInt(10 ** token.decimals);
+  const tokenAmount = Number(amount) / Number(divisor);
+
+  return tokenAmount * token.priceUsd;
+}
+
+// Usage
+const { tokens } = await mina.getBridgeableTokens(42161);
+const usdc = tokens.find(t => t.symbol === 'USDC');
+
+if (usdc) {
+  const usdValue = calculateUsdValue(usdc, '1000000'); // 1 USDC
+  console.log(`Value: $${usdValue?.toFixed(2)}`); // "Value: $1.00"
+}
+```
+
+## Caching Behavior
+
+Token data is cached for **15 minutes**:
+
+- Bridgeable tokens and all tokens are cached separately
+- Stale cache is returned if the API fails
+- Cache can be manually invalidated
+
+```typescript
+const { tokens, isStale, cachedAt } = await mina.getBridgeableTokens(42161);
+
+if (isStale) {
+  console.warn('Using cached token data from:', new Date(cachedAt!));
+}
+```
+
+## Error Handling
+
+Handle token fetch errors gracefully:
+
+```typescript
+import { TokenFetchError } from '@siphoyawe/mina-sdk';
+
+try {
+  const { tokens } = await mina.getBridgeableTokens(42161);
+} catch (error) {
+  if (error instanceof TokenFetchError) {
+    console.error(`Failed to fetch tokens for chain ${error.chainId}:`, error.message);
+
+    if (error.cachedAvailable) {
+      console.log('Stale cache may be available');
+    }
+  }
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quotes" icon="calculator" href="/concepts/quotes">
+    Get bridge quotes with token amounts
+  </Card>
+  <Card title="Execution" icon="play" href="/concepts/execution">
+    Execute bridge transactions
+  </Card>
+</CardGroup>

@@ -1,0 +1,331 @@
+---
+title: "Simple Bridge"
+description: "Execute a basic bridge transaction from Arbitrum to Hyperliquid"
+---
+
+# Simple Bridge
+
+This example demonstrates how to execute a basic bridge transaction, moving USDC from Arbitrum to Hyperliquid's HyperEVM chain.
+
+## Overview
+
+The simplest bridge flow involves three steps:
+
+1. Initialize the Mina SDK
+2. Get a quote for the bridge
+3. Execute the bridge with a wallet signer
+
+## Prerequisites
+
+Before starting, ensure you have:
+
+- Installed the Mina SDK and viem
+- A wallet with USDC on Arbitrum
+- Basic understanding of TypeScript/JavaScript async patterns
+
+## Complete Example
+
+<CodeGroup>
+```typescript TypeScript
+import { Mina } from '@siphoyawe/mina-sdk';
+import { createWalletClient, http } from 'viem';
+import { arbitrum } from 'viem/chains';
+import { privateKeyToAccount } from 'viem/accounts';
+
+// Step 1: Initialize the SDK
+const mina = new Mina({
+  integrator: 'my-dapp',
+  autoDeposit: true,  // Automatically deposit to Hyperliquid L1
+});
+
+// Step 2: Create a viem wallet client (or use your existing wallet)
+const account = privateKeyToAccount('0x...');
+const walletClient = createWalletClient({
+  account,
+  chain: arbitrum,
+  transport: http(),
+});
+
+// Step 3: Create a signer adapter for the SDK
+const signer = {
+  async sendTransaction(request) {
+    const hash = await walletClient.sendTransaction({
+      to: request.to as `0x${string}`,
+      data: request.data as `0x${string}`,
+      value: BigInt(request.value),
+      chain: arbitrum,
+    });
+    return hash;
+  },
+  async getAddress() {
+    return walletClient.account.address;
+  },
+  async getChainId() {
+    return arbitrum.id;
+  },
+};
+
+async function bridgeUSDC() {
+  const walletAddress = walletClient.account.address;
+
+  // Step 4: Get a quote
+  const quote = await mina.getQuote({
+    fromChainId: 42161,        // Arbitrum
+    toChainId: 999,            // HyperEVM
+    fromToken: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831', // USDC on Arbitrum
+    toToken: '0xb88339cb7199b77e23db6e890353e22632ba630f',   // USDC on HyperEVM
+    fromAmount: '1000000000',  // 1000 USDC (6 decimals)
+    fromAddress: walletAddress,
+    slippageTolerance: 0.5,    // 0.5% slippage
+  });
+
+  console.log('Quote received:');
+  console.log(`  Will receive: ${quote.toAmount} USDC`);
+  console.log(`  Estimated time: ${quote.estimatedTime}s`);
+  console.log(`  Total fees: $${quote.fees.totalUsd.toFixed(2)}`);
+
+  // Step 5: Execute the bridge with status callbacks
+  const result = await mina.execute({
+    quote,
+    signer,
+    onStepChange: (step) => {
+      console.log(`Step ${step.step}: ${step.status}`);
+      if (step.txHash) {
+        console.log(`  Transaction: ${step.txHash}`);
+      }
+    },
+    onStatusChange: (status) => {
+      console.log(`Progress: ${status.progress}% - ${status.substatus}`);
+    },
+  });
+
+  // Step 6: Handle the result
+  if (result.status === 'completed') {
+    console.log('Bridge successful!');
+    console.log(`  Transaction hash: ${result.txHash}`);
+    console.log(`  Received: ${result.receivedAmount}`);
+    if (result.depositTxHash) {
+      console.log(`  Deposited to L1: ${result.depositTxHash}`);
+    }
+  } else if (result.status === 'failed') {
+    console.error('Bridge failed:', result.error?.message);
+  }
+}
+
+// Run the bridge
+bridgeUSDC().catch(console.error);
+```
+
+```javascript JavaScript
+import { Mina } from '@siphoyawe/mina-sdk';
+import { createWalletClient, http } from 'viem';
+import { arbitrum } from 'viem/chains';
+import { privateKeyToAccount } from 'viem/accounts';
+
+// Initialize SDK
+const mina = new Mina({
+  integrator: 'my-dapp',
+  autoDeposit: true,
+});
+
+// Create wallet client
+const account = privateKeyToAccount('0x...');
+const walletClient = createWalletClient({
+  account,
+  chain: arbitrum,
+  transport: http(),
+});
+
+// Create signer
+const signer = {
+  sendTransaction: async (request) => {
+    const hash = await walletClient.sendTransaction({
+      to: request.to,
+      data: request.data,
+      value: BigInt(request.value),
+      chain: arbitrum,
+    });
+    return hash;
+  },
+  getAddress: async () => walletClient.account.address,
+  getChainId: async () => arbitrum.id,
+};
+
+async function bridgeUSDC() {
+  const walletAddress = walletClient.account.address;
+
+  // Get quote
+  const quote = await mina.getQuote({
+    fromChainId: 42161,
+    toChainId: 999,
+    fromToken: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
+    toToken: '0xb88339cb7199b77e23db6e890353e22632ba630f',
+    fromAmount: '1000000000',
+    fromAddress: walletAddress,
+  });
+
+  console.log(`Will receive: ${quote.toAmount} USDC`);
+
+  // Execute bridge
+  const result = await mina.execute({
+    quote,
+    signer,
+    onStepChange: (step) => console.log(`${step.step}: ${step.status}`),
+  });
+
+  console.log('Result:', result.status);
+}
+
+bridgeUSDC();
+```
+</CodeGroup>
+
+## Step-by-Step Breakdown
+
+<Steps>
+  <Step title="Initialize the SDK">
+    Create a new Mina instance with your integrator name. The `autoDeposit` option controls whether bridged funds are automatically deposited to your Hyperliquid L1 trading account.
+
+    ```typescript
+    const mina = new Mina({
+      integrator: 'my-dapp',
+      autoDeposit: true,
+    });
+    ```
+  </Step>
+
+  <Step title="Set up the wallet signer">
+    The SDK requires a signer that implements `sendTransaction`, `getAddress`, and `getChainId`. This example uses viem, but any compatible wallet library works.
+
+    ```typescript
+    const signer = {
+      async sendTransaction(request) {
+        return await walletClient.sendTransaction({
+          to: request.to,
+          data: request.data,
+          value: BigInt(request.value),
+          chain: arbitrum,
+        });
+      },
+      async getAddress() {
+        return walletClient.account.address;
+      },
+      async getChainId() {
+        return arbitrum.id;
+      },
+    };
+    ```
+  </Step>
+
+  <Step title="Get a bridge quote">
+    Request a quote specifying the source chain, destination chain, tokens, and amount. The quote includes estimated output, fees, and execution time.
+
+    ```typescript
+    const quote = await mina.getQuote({
+      fromChainId: 42161,        // Arbitrum
+      toChainId: 999,            // HyperEVM
+      fromToken: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
+      toToken: '0xb88339cb7199b77e23db6e890353e22632ba630f',
+      fromAmount: '1000000000',  // 1000 USDC
+      fromAddress: walletAddress,
+      slippageTolerance: 0.5,    // 0.5%
+    });
+    ```
+  </Step>
+
+  <Step title="Execute the bridge">
+    Execute the quote with the signer. Use callbacks to track progress in real-time.
+
+    ```typescript
+    const result = await mina.execute({
+      quote,
+      signer,
+      onStepChange: (step) => {
+        console.log(`Step: ${step.step} - Status: ${step.status}`);
+      },
+      onStatusChange: (status) => {
+        console.log(`Progress: ${status.progress}%`);
+      },
+    });
+    ```
+  </Step>
+
+  <Step title="Handle the result">
+    Check the execution result and handle success or failure appropriately.
+
+    ```typescript
+    if (result.status === 'completed') {
+      console.log('Success! TxHash:', result.txHash);
+    } else {
+      console.error('Failed:', result.error?.message);
+    }
+    ```
+  </Step>
+</Steps>
+
+## Status Callbacks
+
+The `execute` method accepts two callback functions for monitoring progress:
+
+### onStepChange
+
+Called when individual steps (approval, swap, bridge, deposit) change status.
+
+```typescript
+interface StepStatusPayload {
+  stepId: string;
+  step: 'approval' | 'swap' | 'bridge' | 'deposit';
+  status: 'pending' | 'active' | 'completed' | 'failed';
+  txHash: string | null;
+  error: Error | null;
+  timestamp: number;
+}
+```
+
+### onStatusChange
+
+Called when the overall transaction status changes.
+
+```typescript
+interface TransactionStatusPayload {
+  status: 'pending' | 'in_progress' | 'completed' | 'failed';
+  substatus: string;
+  currentStep: number;
+  totalSteps: number;
+  progress: number;  // 0-100
+  estimatedTime: number;
+  txHash: string;
+  receivingTxHash: string | null;
+}
+```
+
+## Common Token Addresses
+
+| Chain | Token | Address |
+|-------|-------|---------|
+| Arbitrum | USDC | `0xaf88d065e77c8cC2239327C5EDb3A432268e5831` |
+| Ethereum | USDC | `0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48` |
+| Optimism | USDC | `0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85` |
+| Base | USDC | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` |
+| HyperEVM | USDC | `0xb88339cb7199b77e23db6e890353e22632ba630f` |
+
+<Note>
+Always verify token addresses before executing transactions. The SDK's `getTokens()` method returns verified token addresses for each chain.
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Token Selection" icon="coins" href="/examples/token-selection">
+    Build a UI for selecting chains and tokens
+  </Card>
+  <Card title="Quote Display" icon="receipt" href="/examples/quote-display">
+    Display detailed quote information
+  </Card>
+  <Card title="Error Handling" icon="shield" href="/examples/error-handling">
+    Handle errors gracefully
+  </Card>
+  <Card title="Full Integration" icon="puzzle-piece" href="/examples/full-integration">
+    Complete bridge widget example
+  </Card>
+</CardGroup>

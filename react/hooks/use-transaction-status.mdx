@@ -1,0 +1,420 @@
+---
+title: "useTransactionStatus"
+description: "React hook for tracking bridge transaction status with automatic polling"
+---
+
+# useTransactionStatus
+
+The `useTransactionStatus` hook tracks bridge transaction progress with automatic polling until the transaction reaches a terminal state (completed or failed).
+
+## Import
+
+```typescript
+import { useTransactionStatus } from '@siphoyawe/mina-sdk/react';
+```
+
+## Signature
+
+```typescript
+function useTransactionStatus(
+  transactionId: string | null
+): UseTransactionStatusReturn
+```
+
+## Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `transactionId` | `string \| null` | Yes | Transaction hash to track. Pass `null` to disable polling. |
+
+<Note>
+The default polling interval is 3 seconds. Polling automatically stops when the transaction reaches a terminal status.
+</Note>
+
+## Returns
+
+### UseTransactionStatusReturn
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `status` | `TransactionStatus \| null` | Current transaction status |
+| `isLoading` | `boolean` | `true` while fetching status |
+| `error` | `Error \| null` | Any error that occurred |
+| `refetch` | `() => Promise<void>` | Manually refresh status |
+
+### TransactionStatus
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `status` | `string` | `'pending'` \| `'processing'` \| `'completed'` \| `'failed'` \| `'cancelled'` |
+| `steps` | `StepStatus[]` | Array of individual step statuses |
+| `txHash` | `string` | The source transaction hash |
+| `createdAt` | `number` | Timestamp when transaction was created |
+| `updatedAt` | `number` | Timestamp of last status update |
+
+## Features
+
+- **Automatic polling** - Polls every 3 seconds while transaction is pending
+- **Smart stop** - Automatically stops polling on terminal status (completed, failed, cancelled)
+- **State preservation** - Keeps last known status on error
+- **Manual refresh** - Call `refetch()` for immediate status update
+
+## Basic Usage
+
+```typescript
+'use client';
+
+import { useTransactionStatus } from '@siphoyawe/mina-sdk/react';
+
+function TransactionTracker({ txHash }: { txHash: string }) {
+  const { status, isLoading, error } = useTransactionStatus(txHash);
+
+  if (isLoading && !status) {
+    return <div>Loading status...</div>;
+  }
+
+  if (error) {
+    return <div>Error: {error.message}</div>;
+  }
+
+  if (!status) {
+    return null;
+  }
+
+  return (
+    <div>
+      <h3>Transaction Status: {status.status}</h3>
+      <ul>
+        {status.steps.map((step, index) => (
+          <li key={index}>
+            {step.stepId}: {step.status}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+```
+
+## Full Bridge Flow Example
+
+Track a transaction from execution through completion:
+
+```typescript
+'use client';
+
+import { useState } from 'react';
+import { useMina, useTransactionStatus } from '@siphoyawe/mina-sdk/react';
+import type { Quote } from '@siphoyawe/mina-sdk/react';
+
+function BridgeExecution({ quote, signer }: { quote: Quote; signer: any }) {
+  const { mina, isReady } = useMina();
+  const [txHash, setTxHash] = useState<string | null>(null);
+  const [executing, setExecuting] = useState(false);
+
+  const { status, isLoading, error } = useTransactionStatus(txHash);
+
+  const handleBridge = async () => {
+    if (!mina || !isReady) return;
+
+    setExecuting(true);
+    try {
+      const result = await mina.execute({
+        quote,
+        signer,
+      });
+
+      if (result.txHash) {
+        setTxHash(result.txHash);
+      }
+    } catch (err) {
+      console.error('Bridge failed:', err);
+    } finally {
+      setExecuting(false);
+    }
+  };
+
+  // Not yet started
+  if (!txHash) {
+    return (
+      <button onClick={handleBridge} disabled={executing}>
+        {executing ? 'Submitting...' : 'Bridge Now'}
+      </button>
+    );
+  }
+
+  // Transaction in progress
+  return (
+    <div className="transaction-status">
+      <h3>Bridge in Progress</h3>
+
+      {status ? (
+        <TransactionProgress status={status} />
+      ) : isLoading ? (
+        <p>Loading status...</p>
+      ) : error ? (
+        <p>Error: {error.message}</p>
+      ) : null}
+    </div>
+  );
+}
+
+function TransactionProgress({ status }: { status: TransactionStatus }) {
+  const isComplete = status.status === 'completed';
+  const isFailed = status.status === 'failed';
+
+  return (
+    <div>
+      <div className={`status-badge ${status.status}`}>
+        {status.status.toUpperCase()}
+      </div>
+
+      <div className="steps">
+        {status.steps.map((step, i) => (
+          <div key={i} className={`step ${step.status}`}>
+            <span className="step-name">{step.stepId}</span>
+            <span className="step-status">{step.status}</span>
+            {step.txHash && (
+              <a
+                href={`https://etherscan.io/tx/${step.txHash}`}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                View TX
+              </a>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {isComplete && (
+        <div className="success-message">
+          Bridge completed successfully!
+        </div>
+      )}
+
+      {isFailed && (
+        <div className="error-message">
+          Bridge failed. Please try again.
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+## Status States
+
+The transaction can be in one of these states:
+
+| Status | Description | Polling |
+|--------|-------------|---------|
+| `pending` | Transaction submitted, waiting for confirmation | Continues |
+| `processing` | Transaction is being processed | Continues |
+| `completed` | Transaction completed successfully | Stops |
+| `failed` | Transaction failed | Stops |
+| `cancelled` | Transaction was cancelled | Stops |
+
+## Step-by-Step Progress
+
+Display detailed progress for each step:
+
+```typescript
+'use client';
+
+import { useTransactionStatus } from '@siphoyawe/mina-sdk/react';
+
+function DetailedProgress({ txHash }: { txHash: string }) {
+  const { status } = useTransactionStatus(txHash);
+
+  if (!status) return null;
+
+  const completedSteps = status.steps.filter(s => s.status === 'completed').length;
+  const totalSteps = status.steps.length;
+  const progress = totalSteps > 0 ? (completedSteps / totalSteps) * 100 : 0;
+
+  return (
+    <div className="progress-container">
+      <div className="progress-bar">
+        <div
+          className="progress-fill"
+          style={{ width: `${progress}%` }}
+        />
+      </div>
+
+      <p>{completedSteps} of {totalSteps} steps completed</p>
+
+      <div className="step-list">
+        {status.steps.map((step, index) => (
+          <div
+            key={index}
+            className={`step-item step-${step.status}`}
+          >
+            <div className="step-icon">
+              {step.status === 'completed' && '✓'}
+              {step.status === 'pending' && '○'}
+              {step.status === 'processing' && '◐'}
+              {step.status === 'failed' && '✕'}
+            </div>
+            <div className="step-info">
+              <span className="step-name">{step.stepId}</span>
+              {step.txHash && (
+                <a
+                  href={getExplorerUrl(step.chainId, step.txHash)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="tx-link"
+                >
+                  {step.txHash.slice(0, 10)}...
+                </a>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function getExplorerUrl(chainId: number, txHash: string): string {
+  const explorers: Record<number, string> = {
+    1: 'https://etherscan.io',
+    42161: 'https://arbiscan.io',
+    8453: 'https://basescan.org',
+    10: 'https://optimistic.etherscan.io',
+    999: 'https://explorer.hyperliquid.xyz',
+  };
+
+  const base = explorers[chainId] ?? 'https://etherscan.io';
+  return `${base}/tx/${txHash}`;
+}
+```
+
+## Handling Completion
+
+React to transaction completion:
+
+```typescript
+'use client';
+
+import { useEffect } from 'react';
+import { useTransactionStatus } from '@siphoyawe/mina-sdk/react';
+
+function TransactionWatcher({
+  txHash,
+  onComplete,
+  onFailed,
+}: {
+  txHash: string;
+  onComplete: () => void;
+  onFailed: (error: string) => void;
+}) {
+  const { status } = useTransactionStatus(txHash);
+
+  useEffect(() => {
+    if (!status) return;
+
+    if (status.status === 'completed') {
+      onComplete();
+    } else if (status.status === 'failed') {
+      onFailed('Transaction failed');
+    }
+  }, [status, onComplete, onFailed]);
+
+  return (
+    <div>
+      Status: {status?.status ?? 'Loading...'}
+    </div>
+  );
+}
+```
+
+## Manual Refresh
+
+Use `refetch` for immediate status updates:
+
+```typescript
+'use client';
+
+import { useTransactionStatus } from '@siphoyawe/mina-sdk/react';
+
+function TransactionWithRefresh({ txHash }: { txHash: string }) {
+  const { status, isLoading, refetch } = useTransactionStatus(txHash);
+
+  return (
+    <div>
+      <p>Status: {status?.status ?? 'Unknown'}</p>
+
+      <button
+        onClick={refetch}
+        disabled={isLoading}
+      >
+        {isLoading ? 'Refreshing...' : 'Refresh Now'}
+      </button>
+    </div>
+  );
+}
+```
+
+## Error Handling
+
+```typescript
+'use client';
+
+import { useTransactionStatus } from '@siphoyawe/mina-sdk/react';
+
+function RobustTransactionTracker({ txHash }: { txHash: string }) {
+  const { status, isLoading, error, refetch } = useTransactionStatus(txHash);
+
+  if (error) {
+    return (
+      <div className="error-state">
+        <p>Failed to fetch transaction status</p>
+        <p className="error-detail">{error.message}</p>
+        <button onClick={refetch}>Retry</button>
+      </div>
+    );
+  }
+
+  // Previous status is preserved during refetch
+  return (
+    <div className={isLoading ? 'opacity-70' : ''}>
+      {status ? (
+        <div>
+          <p>Status: {status.status}</p>
+          {isLoading && <span>Updating...</span>}
+        </div>
+      ) : (
+        <p>Loading transaction status...</p>
+      )}
+    </div>
+  );
+}
+```
+
+## Best Practices
+
+<Note>
+**Usage Tips:**
+
+1. **Pass `null` to disable** - Set `transactionId` to `null` when there is no active transaction to prevent unnecessary polling.
+
+2. **Handle terminal states** - Check for `completed` or `failed` status to show appropriate UI and stop any manual polling logic.
+
+3. **Preserve last status** - The hook keeps the last known status even if an error occurs during refresh.
+
+4. **Clean up on unmount** - The hook automatically cleans up polling intervals when the component unmounts.
+
+5. **Use with execution result** - After calling `mina.execute()`, use the returned `txHash` to start tracking.
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="useMina" icon="hook" href="/react/hooks/use-mina">
+    Access SDK instance for execution
+  </Card>
+  <Card title="useQuote" icon="calculator" href="/react/hooks/use-quote">
+    Fetch bridge quotes
+  </Card>
+</CardGroup>

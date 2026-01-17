@@ -1,0 +1,309 @@
+---
+title: "Caching"
+description: "Understanding and managing cache behavior in the Mina SDK"
+---
+
+# Caching
+
+The Mina SDK includes a built-in caching layer for chains, tokens, balances, and quotes. This reduces API calls, improves performance, and provides fallback data when the network is unavailable.
+
+## Cache TTLs
+
+Each data type has a different cache TTL (Time To Live) based on how frequently the data changes:
+
+| Data Type | TTL | Constant | Description |
+|-----------|-----|----------|-------------|
+| Chains | 30 minutes | - | Rarely changes, long-lived cache |
+| Tokens | 15 minutes | - | Occasionally updated with new tokens |
+| Balances | 10 seconds | `BALANCE_CACHE_TTL_MS` | Frequently changes, short TTL for real-time accuracy |
+| Quotes | 30 seconds | `QUOTE_CACHE_TTL_MS` | Market-dependent, expires quickly |
+
+<Note>
+Quote caching respects the quote's `expiresAt` timestamp. Even if the cache TTL has not passed, expired quotes are not returned from cache.
+</Note>
+
+## Cache Classes
+
+The SDK provides four cache classes for different data types:
+
+### ChainCache
+
+Caches chain data including metadata and route connections.
+
+```typescript
+import { ChainCache, createChainCache, invalidateChainCache } from '@siphoyawe/mina-sdk';
+
+// Create a custom cache instance
+const chainCache = createChainCache();
+
+// Use with standalone functions
+const chains = await getChains(chainCache);
+```
+
+### TokenCache
+
+Caches token lists per chain and bridgeable token lists.
+
+```typescript
+import { TokenCache, createTokenCache, invalidateTokenCache } from '@siphoyawe/mina-sdk';
+
+// Create a custom cache instance
+const tokenCache = createTokenCache();
+
+// Use with standalone functions
+const tokens = await getTokens(1, tokenCache);
+```
+
+### BalanceCache
+
+Caches user balances with request deduplication and debouncing.
+
+```typescript
+import { BalanceCache, createBalanceCache, invalidateBalanceCache } from '@siphoyawe/mina-sdk';
+
+// Create a custom cache instance
+const balanceCache = createBalanceCache();
+
+// Use with standalone functions
+const balance = await getBalance({
+  address: '0x...',
+  chainId: 1,
+  tokenAddress: '0x...'
+}, balanceCache);
+```
+
+### QuoteCache
+
+Caches quote results keyed by quote parameters.
+
+```typescript
+import { QuoteCache, createQuoteCache, invalidateQuoteCache } from '@siphoyawe/mina-sdk';
+
+// Create a custom cache instance
+const quoteCache = createQuoteCache();
+
+// Use with standalone functions
+const quote = await getQuote(params, true, quoteCache);
+```
+
+## Invalidating Cache
+
+The SDK provides methods to manually invalidate cached data when you need fresh data.
+
+### Using the Mina Client
+
+```typescript
+const mina = new Mina({ integrator: 'my-app' });
+
+// Invalidate all chain data
+mina.invalidateChainCache();
+
+// Invalidate token data (all chains or specific chain)
+mina.invalidateTokenCache();       // All chains
+mina.invalidateTokenCache(1);      // Ethereum only
+
+// Invalidate balance data (all addresses or specific address)
+mina.invalidateBalanceCache();             // All addresses
+mina.invalidateBalanceCache('0x...');      // Specific address
+
+// Invalidate quote cache
+mina.invalidateQuoteCache();
+```
+
+### Using Standalone Functions
+
+```typescript
+import {
+  invalidateChainCache,
+  invalidateTokenCache,
+  invalidateBalanceCache,
+  invalidateQuoteCache
+} from '@siphoyawe/mina-sdk';
+
+// Invalidate default caches
+invalidateChainCache();
+invalidateTokenCache();
+invalidateBalanceCache();
+invalidateQuoteCache();
+
+// Or invalidate specific cache instances
+const myCache = createBalanceCache();
+invalidateBalanceCache('0x...', myCache);
+```
+
+## The isStale Flag
+
+Many SDK responses include an `isStale` flag that indicates whether the data came from an expired cache (used as a fallback when the API is unavailable).
+
+```typescript
+// Chains with metadata
+const { chains, isStale, cachedAt } = await mina.getChainsWithMetadata();
+
+if (isStale) {
+  console.warn('Using stale chain data from', new Date(cachedAt));
+  // Consider retrying or showing a warning to users
+}
+```
+
+<Tabs>
+  <Tab title="Chains">
+    ```typescript
+    const { chains, isStale, cachedAt } = await mina.getChainsWithMetadata();
+
+    if (isStale) {
+      // Data is from expired cache (API was unavailable)
+      console.warn('Chain data may be outdated');
+    }
+    ```
+  </Tab>
+  <Tab title="Tokens">
+    ```typescript
+    const { tokens, isStale, cachedAt } = await mina.getTokensWithMetadata(1);
+
+    if (isStale) {
+      // Token list may be outdated
+      console.warn('Token data may be outdated');
+    }
+    ```
+  </Tab>
+  <Tab title="Balances">
+    ```typescript
+    const { balance, isStale, cachedAt } = await mina.getBalanceWithMetadata(
+      1, '0xA0b86...', '0x...'
+    );
+
+    if (isStale) {
+      // Balance may not reflect recent transactions
+      console.warn('Balance data may be outdated');
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<Warning>
+When `isStale` is `true`, the data may not reflect recent changes. Always inform users when displaying stale data, especially for balance and quote information.
+</Warning>
+
+## Custom Cache Instances
+
+By default, standalone functions use a shared default cache. For isolation (e.g., in server environments with multiple tenants), create separate cache instances:
+
+```typescript
+import {
+  createChainCache,
+  createTokenCache,
+  createBalanceCache,
+  createQuoteCache,
+  getChains,
+  getTokens,
+  getBalance,
+  getQuote
+} from '@siphoyawe/mina-sdk';
+
+// Create isolated caches for each tenant/user
+function createUserCaches() {
+  return {
+    chainCache: createChainCache(),
+    tokenCache: createTokenCache(),
+    balanceCache: createBalanceCache(),
+    quoteCache: createQuoteCache(),
+  };
+}
+
+// Use isolated caches
+const userCaches = createUserCaches();
+
+const chains = await getChains(userCaches.chainCache);
+const tokens = await getTokens(1, userCaches.tokenCache);
+const balance = await getBalance(params, userCaches.balanceCache);
+const quote = await getQuote(quoteParams, true, userCaches.quoteCache);
+```
+
+<Note>
+The `Mina` client automatically creates its own isolated cache instances. Each `new Mina()` call has separate caches, preventing cross-contamination between client instances.
+</Note>
+
+## Resetting Default Caches
+
+For testing or when you need to completely reset the default caches:
+
+```typescript
+import {
+  resetDefaultCache,         // Chain cache
+  resetDefaultTokenCache,    // Token cache
+  resetDefaultBalanceCache,  // Balance cache
+  resetDefaultQuoteCache,    // Quote cache
+} from '@siphoyawe/mina-sdk';
+
+// Reset all default caches (useful in tests)
+resetDefaultCache();
+resetDefaultTokenCache();
+resetDefaultBalanceCache();
+resetDefaultQuoteCache();
+```
+
+## Balance Cache Features
+
+The balance cache includes additional features for optimal performance:
+
+### Request Deduplication
+
+Concurrent requests for the same balance are deduplicated:
+
+```typescript
+// These three calls result in only ONE API request
+const [balance1, balance2, balance3] = await Promise.all([
+  mina.getBalance(1, '0x...token', '0x...wallet'),
+  mina.getBalance(1, '0x...token', '0x...wallet'),
+  mina.getBalance(1, '0x...token', '0x...wallet'),
+]);
+```
+
+### Debouncing
+
+Rapid balance requests are debounced with a 300ms window (`BALANCE_DEBOUNCE_MS`) to prevent API flooding:
+
+```typescript
+// Rapid calls are automatically debounced
+for (let i = 0; i < 10; i++) {
+  mina.getBalance(1, tokenAddress, walletAddress);
+}
+// Only a few actual API calls are made
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Let Cache Work" icon="clock">
+    Avoid manually invalidating cache unless necessary. The TTLs are optimized for typical use cases.
+  </Card>
+  <Card title="Check Staleness" icon="triangle-exclamation">
+    Always check `isStale` when displaying critical data like balances. Warn users appropriately.
+  </Card>
+  <Card title="Pre-warm Cache" icon="fire">
+    Fetch chain and token data on app startup to warm the cache before users need it.
+  </Card>
+  <Card title="Isolate Server Caches" icon="server">
+    In multi-tenant server environments, create separate cache instances per tenant.
+  </Card>
+</CardGroup>
+
+## Example: Pre-warming Cache on Startup
+
+```typescript
+import { Mina } from '@siphoyawe/mina-sdk';
+
+const mina = new Mina({ integrator: 'my-app' });
+
+async function initializeApp() {
+  // Pre-warm caches in parallel
+  await Promise.all([
+    mina.getChains(),
+    mina.getChainsByRoutes(), // Chains with routes to HyperEVM
+  ]);
+
+  console.log('Cache warmed, app ready');
+}
+
+initializeApp();
+```

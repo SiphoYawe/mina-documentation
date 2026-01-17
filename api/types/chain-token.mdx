@@ -1,0 +1,200 @@
+---
+title: "Chain and Token Types"
+description: "TypeScript type definitions for chains, tokens, and their responses"
+---
+
+# Chain and Token Types
+
+Types for representing blockchain networks and token metadata.
+
+## Chain
+
+Metadata for a supported blockchain network.
+
+```typescript
+interface Chain {
+  /** Chain ID (e.g., 1 for Ethereum mainnet) */
+  id: number;
+  /** Chain key/slug (e.g., "eth", "arb") */
+  key: string;
+  /** Human-readable chain name */
+  name: string;
+  /** URL to chain logo image */
+  logoUrl: string;
+  /** Native gas token for the chain */
+  nativeToken: Token;
+  /** Whether this is an EVM-compatible chain */
+  isEvm: boolean;
+}
+```
+
+### Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `id` | `number` | Unique chain identifier (e.g., 1 for Ethereum, 42161 for Arbitrum, 999 for HyperEVM) |
+| `key` | `string` | Short identifier/slug for the chain (e.g., "eth", "arb", "hyperevm") |
+| `name` | `string` | Human-readable chain name (e.g., "Ethereum", "Arbitrum One", "HyperEVM") |
+| `logoUrl` | `string` | URL to the chain's logo image for UI display |
+| `nativeToken` | `Token` | The native gas token used on this chain (e.g., ETH, HYPE) |
+| `isEvm` | `boolean` | Whether the chain is EVM-compatible |
+
+### Example
+
+```typescript
+const chains = await mina.getChains();
+
+chains.forEach(chain => {
+  console.log(`${chain.name} (${chain.id})`);
+  console.log(`  Native token: ${chain.nativeToken.symbol}`);
+  console.log(`  EVM: ${chain.isEvm}`);
+});
+```
+
+---
+
+## Token
+
+Metadata for a token on a specific chain.
+
+```typescript
+interface Token {
+  /** Token contract address (or native token address) */
+  address: string;
+  /** Token symbol (e.g., "USDC") */
+  symbol: string;
+  /** Token name (e.g., "USD Coin") */
+  name: string;
+  /** Token decimals (e.g., 6 for USDC) */
+  decimals: number;
+  /** URL to token logo image */
+  logoUrl: string;
+  /** Current USD price (optional) */
+  priceUsd?: number;
+  /** Chain ID this token is on */
+  chainId: number;
+}
+```
+
+### Properties
+
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| `address` | `string` | Yes | Token contract address. Use `0x0000000000000000000000000000000000000000` for native tokens. |
+| `symbol` | `string` | Yes | Token ticker symbol (e.g., "USDC", "ETH", "HYPE") |
+| `name` | `string` | Yes | Full token name (e.g., "USD Coin", "Ether") |
+| `decimals` | `number` | Yes | Number of decimal places (e.g., 6 for USDC, 18 for ETH) |
+| `logoUrl` | `string` | Yes | URL to token logo image for UI display |
+| `priceUsd` | `number` | No | Current USD price per token (may not always be available) |
+| `chainId` | `number` | Yes | Chain ID where this token exists |
+
+### Example
+
+```typescript
+const tokens = await mina.getBridgeableTokens(1); // Ethereum
+
+const usdc = tokens.find(t => t.symbol === 'USDC');
+if (usdc) {
+  console.log(`USDC on chain ${usdc.chainId}`);
+  console.log(`Address: ${usdc.address}`);
+  console.log(`Decimals: ${usdc.decimals}`);
+  console.log(`Price: $${usdc.priceUsd?.toFixed(2)}`);
+}
+```
+
+---
+
+## ChainsResponse
+
+Response wrapper for chain queries with cache metadata.
+
+```typescript
+interface ChainsResponse {
+  /** Array of chain data */
+  chains: Chain[];
+  /** Whether the data is from stale cache */
+  isStale: boolean;
+  /** Timestamp when data was cached (null if fresh from API) */
+  cachedAt: number | null;
+}
+```
+
+### Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `chains` | `Chain[]` | Array of supported chains |
+| `isStale` | `boolean` | `true` if data is from an expired cache (used as fallback due to API error) |
+| `cachedAt` | `number \| null` | Unix timestamp when data was cached, or `null` if freshly fetched |
+
+### Example
+
+```typescript
+const response = await mina.getChains();
+
+if (response.isStale) {
+  console.warn('Using cached chain data from:', new Date(response.cachedAt!));
+}
+
+response.chains.forEach(chain => {
+  console.log(chain.name);
+});
+```
+
+---
+
+## TokensResponse
+
+Response wrapper for token queries with cache metadata.
+
+```typescript
+interface TokensResponse {
+  /** Array of token data */
+  tokens: Token[];
+  /** Whether the data is from stale cache */
+  isStale: boolean;
+  /** Timestamp when data was cached (null if fresh from API) */
+  cachedAt: number | null;
+}
+```
+
+### Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `tokens` | `Token[]` | Array of tokens for the requested chain |
+| `isStale` | `boolean` | `true` if data is from an expired cache |
+| `cachedAt` | `number \| null` | Unix timestamp when data was cached, or `null` if fresh |
+
+### Example
+
+```typescript
+const response = await mina.getBridgeableTokens(1);
+
+console.log(`Found ${response.tokens.length} bridgeable tokens`);
+
+if (response.isStale) {
+  console.warn('Token data may be outdated');
+}
+```
+
+---
+
+## Common Token Addresses
+
+The SDK exports commonly used token addresses as constants:
+
+```typescript
+import {
+  NATIVE_TOKEN_ADDRESS,
+  HYPEREVM_USDC_ADDRESS
+} from '@mina-bridge/sdk';
+
+// Native token placeholder (zero address)
+const nativeToken = NATIVE_TOKEN_ADDRESS;
+// '0x0000000000000000000000000000000000000000'
+
+// USDC on HyperEVM
+const hyperevmUsdc = HYPEREVM_USDC_ADDRESS;
+// '0xb88339cb7199b77e23db6e890353e22632ba630f'
+```

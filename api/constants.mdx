@@ -1,0 +1,334 @@
+---
+title: "SDK Constants"
+description: "Exported constants for chain IDs, addresses, timeouts, and configuration"
+---
+
+# SDK Constants
+
+The Mina SDK exports various constants for configuration and reference.
+
+## Chain IDs
+
+Chain identifiers for the Hyperliquid ecosystem.
+
+```typescript
+/** HyperEVM chain ID (L2) */
+export const HYPEREVM_CHAIN_ID = 999;
+
+/** Hyperliquid L1 chain ID (HyperCore) */
+export const HYPERLIQUID_CHAIN_ID = 1337;
+```
+
+### Chain ID Reference
+
+| Chain | ID | Description |
+|-------|-----|-------------|
+| HyperEVM | `999` | Hyperliquid's EVM-compatible L2 chain |
+| Hyperliquid L1 | `1337` | Hyperliquid's native trading chain (HyperCore) |
+
+### Usage
+
+```typescript
+import { HYPEREVM_CHAIN_ID } from '@mina-bridge/sdk';
+
+// Check if destination is HyperEVM
+if (quote.toChainId === HYPEREVM_CHAIN_ID) {
+  console.log('Bridging to HyperEVM');
+}
+```
+
+---
+
+## Token Addresses
+
+Common token addresses used by the SDK.
+
+```typescript
+/** Native token address (zero address for native gas token) */
+export const NATIVE_TOKEN_ADDRESS = '0x0000000000000000000000000000000000000000';
+
+/** USDC address on HyperEVM (Circle USDC Token) */
+export const HYPEREVM_USDC_ADDRESS = '0xb88339cb7199b77e23db6e890353e22632ba630f';
+```
+
+### Address Reference
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `NATIVE_TOKEN_ADDRESS` | `0x0000...0000` | Placeholder for native gas tokens (ETH, HYPE, etc.) |
+| `HYPEREVM_USDC_ADDRESS` | `0xb88339...30f` | Official USDC contract on HyperEVM |
+
+### Usage
+
+```typescript
+import {
+  NATIVE_TOKEN_ADDRESS,
+  HYPEREVM_USDC_ADDRESS
+} from '@mina-bridge/sdk';
+
+// Fetch native token balance
+const nativeBalance = await mina.getBalance({
+  address: walletAddress,
+  chainId: 1,
+  tokenAddress: NATIVE_TOKEN_ADDRESS,
+});
+
+// Bridge to USDC on HyperEVM
+const quote = await mina.getQuote({
+  fromChainId: 1,
+  toChainId: HYPEREVM_CHAIN_ID,
+  fromToken: USDC_ETH,
+  toToken: HYPEREVM_USDC_ADDRESS,
+  // ...
+});
+```
+
+---
+
+## Slippage Configuration
+
+Constants for slippage tolerance validation.
+
+### Percentage Format (Recommended)
+
+```typescript
+/** Minimum allowed slippage tolerance: 0.01% */
+export const MIN_SLIPPAGE_PERCENT = 0.01;
+
+/** Maximum allowed slippage tolerance: 5% */
+export const MAX_SLIPPAGE_PERCENT = 5.0;
+
+/** Default slippage tolerance: 0.5% */
+export const DEFAULT_SLIPPAGE_PERCENT = 0.5;
+
+/** Preset slippage options: 0.1%, 0.5%, 1.0% */
+export const SLIPPAGE_PRESETS_PERCENT = [0.1, 0.5, 1.0] as const;
+```
+
+### Decimal Format (Legacy)
+
+```typescript
+/** @deprecated Minimum slippage (0.01%) in decimal */
+export const MIN_SLIPPAGE = 0.0001;
+
+/** @deprecated Maximum slippage (5%) in decimal */
+export const MAX_SLIPPAGE = 0.05;
+
+/** @deprecated Default slippage (0.5%) in decimal */
+export const DEFAULT_SLIPPAGE = 0.005;
+
+/** @deprecated Preset slippage values in decimal format */
+export const SLIPPAGE_PRESETS = [0.001, 0.005, 0.01] as const;
+```
+
+### Slippage Reference
+
+| Constant | Value | Equivalent |
+|----------|-------|------------|
+| `MIN_SLIPPAGE_PERCENT` | `0.01` | 0.01% |
+| `MAX_SLIPPAGE_PERCENT` | `5.0` | 5.00% |
+| `DEFAULT_SLIPPAGE_PERCENT` | `0.5` | 0.50% |
+
+### Conversion Helpers
+
+```typescript
+/** Convert percentage to decimal (0.5 -> 0.005) */
+export function slippagePercentToDecimal(percent: number): number;
+
+/** Convert decimal to percentage (0.005 -> 0.5) */
+export function slippageDecimalToPercent(decimal: number): number;
+```
+
+---
+
+## API Configuration
+
+API endpoints and timeouts.
+
+```typescript
+/** LI.FI API base URL */
+export const LIFI_API_URL = 'https://li.quest/v1';
+```
+
+### Timeout Configuration
+
+```typescript
+/** Timeout for chain-related API requests (10 seconds) */
+export const CHAIN_API_TIMEOUT_MS = 10000;
+
+/** Timeout for token-related API requests (15 seconds) */
+export const TOKEN_API_TIMEOUT_MS = 15000;
+
+/** Timeout for balance-related API requests (10 seconds) */
+export const BALANCE_API_TIMEOUT_MS = 10000;
+
+/** Timeout for quote-related API requests (30 seconds) */
+export const QUOTE_API_TIMEOUT_MS = 30000;
+```
+
+### Timeout Reference
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `CHAIN_API_TIMEOUT_MS` | 10,000ms | Chains endpoint (faster) |
+| `TOKEN_API_TIMEOUT_MS` | 15,000ms | Tokens endpoint (slower) |
+| `BALANCE_API_TIMEOUT_MS` | 10,000ms | Balance queries |
+| `QUOTE_API_TIMEOUT_MS` | 30,000ms | Quote computation (slowest) |
+
+---
+
+## Cache TTL Configuration
+
+Time-to-live values for cached data.
+
+```typescript
+/** Balance cache TTL (10 seconds) - short for real-time updates */
+export const BALANCE_CACHE_TTL_MS = 10000;
+
+/** Debounce window for rapid balance requests (300ms) */
+export const BALANCE_DEBOUNCE_MS = 300;
+
+/** Quote cache TTL (30 seconds) - short for real-time quotes */
+export const QUOTE_CACHE_TTL_MS = 30000;
+```
+
+### Cache TTL Reference
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `BALANCE_CACHE_TTL_MS` | 10s | Balance data cached briefly |
+| `BALANCE_DEBOUNCE_MS` | 300ms | Debounce rapid balance requests |
+| `QUOTE_CACHE_TTL_MS` | 30s | Quote data cache duration |
+
+Note: Chain cache TTL is 30 minutes and token cache TTL is 15 minutes (internal values).
+
+---
+
+## Price Impact Thresholds
+
+Thresholds for price impact severity levels.
+
+```typescript
+/** Low price impact threshold (0.1%) */
+export const PRICE_IMPACT_LOW = 0.001;
+
+/** Medium price impact threshold (0.5%) */
+export const PRICE_IMPACT_MEDIUM = 0.005;
+
+/** High price impact threshold (1%) - triggers warning */
+export const PRICE_IMPACT_HIGH = 0.01;
+
+/** Very high price impact threshold (3%) - danger level */
+export const PRICE_IMPACT_VERY_HIGH = 0.03;
+```
+
+### Price Impact Reference
+
+| Level | Threshold | Decimal | Description |
+|-------|-----------|---------|-------------|
+| Low | < 0.1% | `< 0.001` | Negligible impact |
+| Medium | 0.1% - 0.5% | `0.001 - 0.005` | Acceptable impact |
+| High | 0.5% - 1% | `0.005 - 0.01` | Warning level |
+| Very High | > 3% | `> 0.03` | Danger level |
+
+### Usage
+
+```typescript
+import { PRICE_IMPACT_HIGH } from '@mina-bridge/sdk';
+
+const quote = await mina.getQuote(params);
+
+if (quote.priceImpact >= PRICE_IMPACT_HIGH) {
+  showWarning('High price impact detected!');
+}
+
+// Or use the built-in properties
+if (quote.highImpact) {
+  showWarning(`Price impact: ${quote.impactSeverity}`);
+}
+```
+
+---
+
+## Deposit Constants
+
+Constants for L1 deposit operations.
+
+```typescript
+/** Minimum USDC deposit amount (5 USDC) */
+export const MINIMUM_DEPOSIT_AMOUNT = '5000000'; // 5 USDC in smallest unit
+
+/** CoreDepositWallet contract address on HyperEVM */
+export const CORE_DEPOSIT_WALLET_ADDRESS = '0x6B9E773128f453f5c2C60935Ee2DE2CBc5390A24';
+
+/** Destination DEX indices */
+export const DestinationDex = {
+  PERPS: 0,           // Trading account (perps)
+  SPOT: 4294967295,   // Spot DEX (uint32.max)
+} as const;
+```
+
+### Deposit Reference
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `MINIMUM_DEPOSIT_AMOUNT` | `5000000` | 5 USDC minimum deposit |
+| `CORE_DEPOSIT_WALLET_ADDRESS` | `0x6B9E...` | Circle deposit contract |
+| `DestinationDex.PERPS` | `0` | Perps trading account |
+| `DestinationDex.SPOT` | `4294967295` | Spot trading account |
+
+---
+
+## All Constants Export
+
+```typescript
+import {
+  // Chain IDs
+  HYPEREVM_CHAIN_ID,
+  HYPERLIQUID_CHAIN_ID,
+
+  // Addresses
+  NATIVE_TOKEN_ADDRESS,
+  HYPEREVM_USDC_ADDRESS,
+
+  // Slippage (percentage)
+  MIN_SLIPPAGE_PERCENT,
+  MAX_SLIPPAGE_PERCENT,
+  DEFAULT_SLIPPAGE_PERCENT,
+  SLIPPAGE_PRESETS_PERCENT,
+
+  // Slippage (decimal, legacy)
+  MIN_SLIPPAGE,
+  MAX_SLIPPAGE,
+  DEFAULT_SLIPPAGE,
+
+  // API
+  LIFI_API_URL,
+
+  // Timeouts
+  CHAIN_API_TIMEOUT_MS,
+  TOKEN_API_TIMEOUT_MS,
+  BALANCE_API_TIMEOUT_MS,
+  QUOTE_API_TIMEOUT_MS,
+
+  // Cache TTLs
+  BALANCE_CACHE_TTL_MS,
+  BALANCE_DEBOUNCE_MS,
+  QUOTE_CACHE_TTL_MS,
+
+  // Price impact
+  PRICE_IMPACT_LOW,
+  PRICE_IMPACT_MEDIUM,
+  PRICE_IMPACT_HIGH,
+  PRICE_IMPACT_VERY_HIGH,
+
+  // Deposit
+  MINIMUM_DEPOSIT_AMOUNT,
+  CORE_DEPOSIT_WALLET_ADDRESS,
+  DestinationDex,
+
+  // Helpers
+  slippagePercentToDecimal,
+  slippageDecimalToPercent,
+} from '@mina-bridge/sdk';
+```

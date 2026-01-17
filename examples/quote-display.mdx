@@ -1,0 +1,873 @@
+---
+title: "Quote Display"
+description: "Build React components to display bridge quotes with fees, timing, and price impact"
+---
+
+# Quote Display
+
+This example shows how to build a comprehensive quote display component that shows estimated output, fees, execution time, price impact, and alternative routes.
+
+## Overview
+
+A good quote display should include:
+
+- Estimated output amount with minimum received
+- Fee breakdown (gas, bridge fees, protocol fees)
+- Estimated execution time
+- Price impact with severity indicators
+- Alternative routes for comparison
+
+## Basic Quote Display Component
+
+<CodeGroup>
+```tsx QuoteDisplay.tsx
+import { useQuote } from '@siphoyawe/mina-sdk/react';
+import type { Quote } from '@siphoyawe/mina-sdk/react';
+
+interface QuoteDisplayProps {
+  fromChainId: number;
+  toChainId: number;
+  fromToken: string;
+  toToken: string;
+  amount: string;
+  fromAddress: string;
+  tokenSymbol: string;
+  tokenDecimals: number;
+}
+
+export function QuoteDisplay({
+  fromChainId,
+  toChainId,
+  fromToken,
+  toToken,
+  amount,
+  fromAddress,
+  tokenSymbol,
+  tokenDecimals,
+}: QuoteDisplayProps) {
+  const { quote, isLoading, error, refetch } = useQuote({
+    fromChain: fromChainId,
+    toChain: toChainId,
+    fromToken,
+    toToken,
+    amount,
+    fromAddress,
+    enabled: Boolean(amount && parseFloat(amount) > 0),
+  });
+
+  if (isLoading) {
+    return (
+      <div className="quote-display loading">
+        <div className="quote-skeleton">
+          <div className="skeleton-line" />
+          <div className="skeleton-line short" />
+          <div className="skeleton-line" />
+        </div>
+        <span>Fetching best route...</span>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="quote-display error">
+        <span className="error-icon">!</span>
+        <span className="error-message">{error.message}</span>
+        <button onClick={refetch} className="retry-button">
+          Try Again
+        </button>
+      </div>
+    );
+  }
+
+  if (!quote) {
+    return (
+      <div className="quote-display empty">
+        <span>Enter an amount to get a quote</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="quote-display">
+      {/* Output Amount */}
+      <QuoteOutput quote={quote} tokenSymbol={tokenSymbol} />
+
+      {/* Fee Breakdown */}
+      <QuoteFees quote={quote} />
+
+      {/* Execution Time */}
+      <QuoteTime quote={quote} />
+
+      {/* Price Impact */}
+      <QuotePriceImpact quote={quote} />
+
+      {/* Alternative Routes */}
+      {quote.alternativeRoutes && quote.alternativeRoutes.length > 0 && (
+        <QuoteAlternatives
+          alternatives={quote.alternativeRoutes}
+          currentRoute={quote}
+        />
+      )}
+
+      {/* Quote Expiry */}
+      <QuoteExpiry expiresAt={quote.expiresAt} onRefresh={refetch} />
+    </div>
+  );
+}
+```
+
+```css QuoteDisplay.css
+.quote-display {
+  background: #1a1a2e;
+  border: 1px solid #2d2d44;
+  border-radius: 16px;
+  padding: 20px;
+}
+
+.quote-display.loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 32px;
+}
+
+.quote-skeleton {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.skeleton-line {
+  height: 20px;
+  background: linear-gradient(90deg, #2d2d44 25%, #3d3d55 50%, #2d2d44 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 4px;
+}
+
+.skeleton-line.short {
+  width: 60%;
+}
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.quote-display.error {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(239, 68, 68, 0.1);
+  border-color: #ef4444;
+}
+
+.error-icon {
+  width: 24px;
+  height: 24px;
+  background: #ef4444;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-weight: bold;
+}
+
+.retry-button {
+  margin-left: auto;
+  padding: 8px 16px;
+  background: #ef4444;
+  border: none;
+  border-radius: 8px;
+  color: white;
+  cursor: pointer;
+}
+
+.quote-display.empty {
+  padding: 32px;
+  text-align: center;
+  color: #888;
+}
+```
+</CodeGroup>
+
+## Output Amount Section
+
+Display the expected output with minimum received guarantee:
+
+```tsx QuoteOutput.tsx
+import type { Quote } from '@siphoyawe/mina-sdk/react';
+
+interface QuoteOutputProps {
+  quote: Quote;
+  tokenSymbol: string;
+}
+
+export function QuoteOutput({ quote, tokenSymbol }: QuoteOutputProps) {
+  // Format the output amount for display
+  const outputFormatted = formatAmount(quote.toAmount, quote.toToken.decimals);
+  const minimumFormatted = quote.minimumReceivedFormatted;
+
+  return (
+    <div className="quote-output">
+      <div className="output-main">
+        <label>You will receive</label>
+        <div className="output-amount">
+          <span className="amount">{outputFormatted}</span>
+          <span className="symbol">{quote.toToken.symbol}</span>
+        </div>
+      </div>
+
+      <div className="output-minimum">
+        <span className="label">Minimum received</span>
+        <span className="value">
+          {minimumFormatted} {quote.toToken.symbol}
+        </span>
+        <span className="slippage">
+          ({quote.slippageTolerance}% slippage)
+        </span>
+      </div>
+
+      {/* Auto-deposit indicator */}
+      {quote.includesAutoDeposit && (
+        <div className="auto-deposit-badge">
+          <CheckIcon />
+          <span>Auto-deposit to Hyperliquid L1</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function formatAmount(amount: string, decimals: number): string {
+  const num = parseFloat(amount) / Math.pow(10, decimals);
+  if (num < 0.0001) return '<0.0001';
+  if (num < 1) return num.toFixed(4);
+  if (num < 1000) return num.toFixed(2);
+  return num.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+function CheckIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="#22c55e">
+      <path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z" />
+    </svg>
+  );
+}
+```
+
+## Fee Breakdown Section
+
+Show detailed fee information:
+
+```tsx QuoteFees.tsx
+import type { Quote } from '@siphoyawe/mina-sdk/react';
+
+interface QuoteFeesProps {
+  quote: Quote;
+}
+
+export function QuoteFees({ quote }: QuoteFeesProps) {
+  const { fees } = quote;
+
+  return (
+    <div className="quote-fees">
+      <div className="fees-header">
+        <span>Fee Breakdown</span>
+        <span className="total-fee">${fees.totalUsd.toFixed(2)}</span>
+      </div>
+
+      <div className="fee-items">
+        {/* Gas Fee */}
+        <div className="fee-item">
+          <div className="fee-label">
+            <GasIcon />
+            <span>Network Gas</span>
+          </div>
+          <span className="fee-value">${fees.gasUsd.toFixed(2)}</span>
+        </div>
+
+        {/* Bridge Fee */}
+        {fees.bridgeFeeUsd > 0 && (
+          <div className="fee-item">
+            <div className="fee-label">
+              <BridgeIcon />
+              <span>Bridge Fee</span>
+            </div>
+            <span className="fee-value">${fees.bridgeFeeUsd.toFixed(2)}</span>
+          </div>
+        )}
+
+        {/* Protocol Fee */}
+        {fees.protocolFeeUsd > 0 && (
+          <div className="fee-item">
+            <div className="fee-label">
+              <ProtocolIcon />
+              <span>Protocol Fee</span>
+            </div>
+            <span className="fee-value">${fees.protocolFeeUsd.toFixed(2)}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Gas Details */}
+      <details className="gas-details">
+        <summary>Gas Details</summary>
+        <div className="gas-breakdown">
+          <div className="gas-item">
+            <span>Gas Limit:</span>
+            <span>{fees.gasEstimate.gasLimit}</span>
+          </div>
+          <div className="gas-item">
+            <span>Gas Price:</span>
+            <span>{formatGwei(fees.gasEstimate.gasPrice)} gwei</span>
+          </div>
+          <div className="gas-item">
+            <span>Native Token Cost:</span>
+            <span>{fees.gasEstimate.gasCost}</span>
+          </div>
+        </div>
+      </details>
+    </div>
+  );
+}
+
+function formatGwei(weiString: string): string {
+  const gwei = parseFloat(weiString) / 1e9;
+  return gwei.toFixed(2);
+}
+
+// Simple icon components
+function GasIcon() {
+  return <span className="icon">G</span>;
+}
+
+function BridgeIcon() {
+  return <span className="icon">B</span>;
+}
+
+function ProtocolIcon() {
+  return <span className="icon">P</span>;
+}
+```
+
+## Execution Time Display
+
+Show estimated time with visual indicator:
+
+```tsx QuoteTime.tsx
+import type { Quote } from '@siphoyawe/mina-sdk/react';
+
+interface QuoteTimeProps {
+  quote: Quote;
+}
+
+export function QuoteTime({ quote }: QuoteTimeProps) {
+  const seconds = quote.estimatedTime;
+  const timeDisplay = formatTime(seconds);
+  const timeCategory = getTimeCategory(seconds);
+
+  return (
+    <div className={`quote-time ${timeCategory}`}>
+      <ClockIcon />
+      <div className="time-info">
+        <span className="time-label">Estimated Time</span>
+        <span className="time-value">{timeDisplay}</span>
+      </div>
+      <div className={`time-badge ${timeCategory}`}>
+        {timeCategory === 'fast' && 'Fast'}
+        {timeCategory === 'normal' && 'Normal'}
+        {timeCategory === 'slow' && 'Slow'}
+      </div>
+    </div>
+  );
+}
+
+function formatTime(seconds: number): string {
+  if (seconds < 60) {
+    return `~${seconds} seconds`;
+  }
+  if (seconds < 3600) {
+    const minutes = Math.ceil(seconds / 60);
+    return `~${minutes} minute${minutes > 1 ? 's' : ''}`;
+  }
+  const hours = Math.ceil(seconds / 3600);
+  return `~${hours} hour${hours > 1 ? 's' : ''}`;
+}
+
+function getTimeCategory(seconds: number): 'fast' | 'normal' | 'slow' {
+  if (seconds < 120) return 'fast';      // Under 2 minutes
+  if (seconds < 600) return 'normal';    // Under 10 minutes
+  return 'slow';                          // 10+ minutes
+}
+
+function ClockIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
+      <path
+        fillRule="evenodd"
+        d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z"
+        clipRule="evenodd"
+      />
+    </svg>
+  );
+}
+```
+
+## Price Impact Indicator
+
+Display price impact with severity levels:
+
+```tsx QuotePriceImpact.tsx
+import type { Quote } from '@siphoyawe/mina-sdk/react';
+
+interface QuotePriceImpactProps {
+  quote: Quote;
+}
+
+export function QuotePriceImpact({ quote }: QuotePriceImpactProps) {
+  const impactPercent = (quote.priceImpact * 100).toFixed(2);
+  const { impactSeverity, highImpact } = quote;
+
+  // Get color and message based on severity
+  const severityConfig = {
+    low: {
+      color: '#22c55e',
+      label: 'Low Impact',
+      message: 'Price impact is negligible',
+    },
+    medium: {
+      color: '#eab308',
+      label: 'Medium Impact',
+      message: 'Price impact is acceptable',
+    },
+    high: {
+      color: '#f97316',
+      label: 'High Impact',
+      message: 'Consider reducing amount',
+    },
+    very_high: {
+      color: '#ef4444',
+      label: 'Very High Impact',
+      message: 'Large price impact - proceed with caution',
+    },
+  };
+
+  const config = severityConfig[impactSeverity];
+
+  return (
+    <div className={`quote-price-impact severity-${impactSeverity}`}>
+      <div className="impact-header">
+        <span className="label">Price Impact</span>
+        <span className="value" style={{ color: config.color }}>
+          {impactPercent}%
+        </span>
+      </div>
+
+      <div className="impact-bar">
+        <div
+          className="impact-fill"
+          style={{
+            width: `${Math.min(quote.priceImpact * 100 * 10, 100)}%`,
+            backgroundColor: config.color,
+          }}
+        />
+      </div>
+
+      <div className="impact-info">
+        <span className="severity-label" style={{ color: config.color }}>
+          {config.label}
+        </span>
+        <span className="severity-message">{config.message}</span>
+      </div>
+
+      {/* Warning for high impact */}
+      {highImpact && (
+        <div className="impact-warning">
+          <WarningIcon />
+          <span>
+            This trade has significant price impact. You may receive considerably
+            less than expected.
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function WarningIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="#ef4444">
+      <path
+        fillRule="evenodd"
+        d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z"
+        clipRule="evenodd"
+      />
+    </svg>
+  );
+}
+```
+
+## Alternative Routes Display
+
+Show other available routes for comparison:
+
+```tsx QuoteAlternatives.tsx
+import type { Quote, RouteComparison } from '@siphoyawe/mina-sdk/react';
+
+interface QuoteAlternativesProps {
+  alternatives: RouteComparison[];
+  currentRoute: Quote;
+}
+
+export function QuoteAlternatives({
+  alternatives,
+  currentRoute,
+}: QuoteAlternativesProps) {
+  return (
+    <div className="quote-alternatives">
+      <div className="alternatives-header">
+        <span>Alternative Routes</span>
+        <span className="route-count">{alternatives.length} available</span>
+      </div>
+
+      <div className="alternatives-list">
+        {alternatives.map((route) => (
+          <div key={route.routeId} className={`route-option ${route.type}`}>
+            <div className="route-badge">
+              {route.type === 'fastest' && 'Fastest'}
+              {route.type === 'cheapest' && 'Cheapest'}
+              {route.type === 'recommended' && 'Recommended'}
+            </div>
+
+            <div className="route-details">
+              <div className="route-stat">
+                <span className="stat-label">Output</span>
+                <span className="stat-value">{formatOutput(route.outputAmount)}</span>
+              </div>
+
+              <div className="route-stat">
+                <span className="stat-label">Time</span>
+                <span className="stat-value">{formatSeconds(route.estimatedTime)}</span>
+              </div>
+
+              <div className="route-stat">
+                <span className="stat-label">Fees</span>
+                <span className="stat-value">${route.totalFees}</span>
+              </div>
+            </div>
+
+            {/* Comparison indicators */}
+            <div className="route-comparison">
+              {compareToCurrentRoute(route, currentRoute)}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function formatOutput(amount: string): string {
+  const num = parseFloat(amount);
+  return num.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+function formatSeconds(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.ceil(seconds / 60)}m`;
+}
+
+function compareToCurrentRoute(alt: RouteComparison, current: Quote): JSX.Element {
+  const currentOutput = parseFloat(current.toAmount);
+  const altOutput = parseFloat(alt.outputAmount);
+  const outputDiff = ((altOutput - currentOutput) / currentOutput) * 100;
+
+  const timeDiff = alt.estimatedTime - current.estimatedTime;
+  const feeDiff = parseFloat(alt.totalFees) - current.fees.totalUsd;
+
+  return (
+    <div className="comparison-badges">
+      {outputDiff > 0.1 && (
+        <span className="badge positive">+{outputDiff.toFixed(2)}% output</span>
+      )}
+      {outputDiff < -0.1 && (
+        <span className="badge negative">{outputDiff.toFixed(2)}% output</span>
+      )}
+      {timeDiff < -30 && (
+        <span className="badge positive">{Math.abs(timeDiff)}s faster</span>
+      )}
+      {feeDiff < -0.5 && (
+        <span className="badge positive">${Math.abs(feeDiff).toFixed(2)} cheaper</span>
+      )}
+    </div>
+  );
+}
+```
+
+## Quote Expiry Countdown
+
+Show when the quote expires and allow refresh:
+
+```tsx QuoteExpiry.tsx
+import { useState, useEffect } from 'react';
+
+interface QuoteExpiryProps {
+  expiresAt: number;
+  onRefresh: () => void;
+}
+
+export function QuoteExpiry({ expiresAt, onRefresh }: QuoteExpiryProps) {
+  const [timeLeft, setTimeLeft] = useState(calculateTimeLeft(expiresAt));
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const remaining = calculateTimeLeft(expiresAt);
+      setTimeLeft(remaining);
+
+      if (remaining <= 0) {
+        clearInterval(timer);
+      }
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [expiresAt]);
+
+  const isExpired = timeLeft <= 0;
+  const isExpiringSoon = timeLeft > 0 && timeLeft <= 30;
+
+  return (
+    <div className={`quote-expiry ${isExpired ? 'expired' : ''} ${isExpiringSoon ? 'warning' : ''}`}>
+      {isExpired ? (
+        <>
+          <span className="expiry-text">Quote expired</span>
+          <button onClick={onRefresh} className="refresh-button">
+            Get New Quote
+          </button>
+        </>
+      ) : (
+        <>
+          <span className="expiry-text">
+            Quote valid for {timeLeft}s
+          </span>
+          {isExpiringSoon && (
+            <button onClick={onRefresh} className="refresh-button small">
+              Refresh
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function calculateTimeLeft(expiresAt: number): number {
+  const now = Date.now();
+  return Math.max(0, Math.floor((expiresAt - now) / 1000));
+}
+```
+
+## Styling for All Components
+
+```css QuoteComponents.css
+/* Quote Output */
+.quote-output {
+  padding: 16px 0;
+  border-bottom: 1px solid #2d2d44;
+}
+
+.output-main {
+  margin-bottom: 12px;
+}
+
+.output-main label {
+  display: block;
+  font-size: 12px;
+  color: #888;
+  margin-bottom: 4px;
+}
+
+.output-amount {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.output-amount .amount {
+  font-size: 28px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.output-amount .symbol {
+  font-size: 18px;
+  color: #888;
+}
+
+.output-minimum {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #888;
+}
+
+.auto-deposit-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 6px 12px;
+  background: rgba(34, 197, 94, 0.1);
+  border-radius: 20px;
+  font-size: 12px;
+  color: #22c55e;
+}
+
+/* Quote Fees */
+.quote-fees {
+  padding: 16px 0;
+  border-bottom: 1px solid #2d2d44;
+}
+
+.fees-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  font-weight: 500;
+}
+
+.total-fee {
+  color: #7dd3fc;
+}
+
+.fee-items {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.fee-item {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14px;
+  color: #888;
+}
+
+.fee-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Quote Time */
+.quote-time {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 0;
+  border-bottom: 1px solid #2d2d44;
+}
+
+.time-badge {
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.time-badge.fast {
+  background: rgba(34, 197, 94, 0.1);
+  color: #22c55e;
+}
+
+.time-badge.normal {
+  background: rgba(234, 179, 8, 0.1);
+  color: #eab308;
+}
+
+.time-badge.slow {
+  background: rgba(249, 115, 22, 0.1);
+  color: #f97316;
+}
+
+/* Quote Price Impact */
+.quote-price-impact {
+  padding: 16px 0;
+  border-bottom: 1px solid #2d2d44;
+}
+
+.impact-bar {
+  height: 4px;
+  background: #2d2d44;
+  border-radius: 2px;
+  margin: 8px 0;
+  overflow: hidden;
+}
+
+.impact-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.impact-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 12px;
+  background: rgba(239, 68, 68, 0.1);
+  border-radius: 8px;
+  font-size: 12px;
+  color: #ef4444;
+}
+
+/* Quote Expiry */
+.quote-expiry {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 16px;
+  font-size: 12px;
+  color: #888;
+}
+
+.quote-expiry.warning .expiry-text {
+  color: #eab308;
+}
+
+.quote-expiry.expired .expiry-text {
+  color: #ef4444;
+}
+
+.refresh-button {
+  padding: 8px 16px;
+  background: #7dd3fc;
+  border: none;
+  border-radius: 8px;
+  color: #0d0d1a;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.refresh-button.small {
+  padding: 4px 12px;
+  font-size: 12px;
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Full Integration" icon="puzzle-piece" href="/examples/full-integration">
+    Combine all components into a complete widget
+  </Card>
+  <Card title="Error Handling" icon="shield" href="/examples/error-handling">
+    Handle quote and execution errors
+  </Card>
+</CardGroup>

@@ -1,11 +1,14 @@
 {
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "Mina SDK",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#7DD3FC",
+    "light": "#93C5FD",
+    "dark": "#0EA5E9"
+  },
+  "appearance": {
+    "default": "dark"
   },
   "favicon": "/favicon.svg",
   "navigation": {
@@ -14,55 +17,113 @@
         "tab": "Guides",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Getting Started",
             "pages": [
               "index",
+              "installation",
               "quickstart",
-              "development"
+              "configuration"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Core Concepts",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "concepts/chains",
+              "concepts/tokens",
+              "concepts/quotes",
+              "concepts/execution",
+              "concepts/auto-deposit",
+              "concepts/slippage"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Advanced",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
-            ]
-          },
-          {
-            "group": "AI tools",
-            "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "advanced/caching",
+              "advanced/custom-rpcs",
+              "advanced/standalone"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "API Reference",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Client",
             "pages": [
-              "api-reference/introduction"
+              "api/mina"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Services",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "api/services/chain",
+              "api/services/token",
+              "api/services/balance",
+              "api/services/quote",
+              "api/services/execute",
+              "api/services/deposit"
+            ]
+          },
+          {
+            "group": "Types",
+            "pages": [
+              "api/types/config",
+              "api/types/chain-token",
+              "api/types/quote-execution",
+              "api/types/status",
+              "api/types/balance"
+            ]
+          },
+          {
+            "group": "Events & Errors",
+            "pages": [
+              "api/events",
+              "api/errors",
+              "api/constants"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "React",
+        "groups": [
+          {
+            "group": "Setup",
+            "pages": [
+              "react/installation",
+              "react/provider"
+            ]
+          },
+          {
+            "group": "Hooks",
+            "pages": [
+              "react/hooks/use-mina",
+              "react/hooks/use-quote",
+              "react/hooks/use-token-balance",
+              "react/hooks/use-transaction-status"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Examples",
+        "groups": [
+          {
+            "group": "Basic Examples",
+            "pages": [
+              "examples/simple-bridge",
+              "examples/token-selection",
+              "examples/quote-display"
+            ]
+          },
+          {
+            "group": "Advanced Examples",
+            "pages": [
+              "examples/full-integration",
+              "examples/error-handling",
+              "examples/event-tracking"
             ]
           }
         ]
@@ -71,14 +132,14 @@
     "global": {
       "anchors": [
         {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
+          "anchor": "GitHub",
+          "href": "https://github.com/siphoyawe/mina-sdk",
+          "icon": "github"
         },
         {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
+          "anchor": "npm",
+          "href": "https://www.npmjs.com/package/@siphoyawe/mina-sdk",
+          "icon": "npm"
         }
       ]
     }
@@ -90,33 +151,29 @@
   "navbar": {
     "links": [
       {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
+        "label": "Hyperliquid",
+        "href": "https://hyperliquid.xyz"
       }
     ],
     "primary": {
       "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
+      "label": "Get Started",
+      "href": "/quickstart"
     }
   },
   "contextual": {
     "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
+      "copy",
+      "view",
+      "chatgpt",
+      "claude",
+      "cursor",
+      "vscode"
+    ]
   },
   "footer": {
     "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
+      "github": "https://github.com/siphoyawe/mina-sdk"
     }
   }
 }

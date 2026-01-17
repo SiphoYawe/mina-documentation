@@ -1,0 +1,779 @@
+---
+title: 'Mina Client'
+description: 'Main client class for the Mina Bridge SDK'
+---
+
+The `Mina` class is the main entry point for the Mina Bridge SDK. It provides a unified interface for bridging assets to HyperEVM and depositing to Hyperliquid L1.
+
+## Constructor
+
+```typescript
+import { Mina } from '@mina-bridge/sdk';
+
+const mina = new Mina(config: MinaConfig);
+```
+
+### MinaConfig
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `integrator` | `string` | Yes | Unique identifier for your application |
+| `rpcUrls` | `Record<number, string>` | No | Custom RPC URLs by chain ID |
+| `autoDeposit` | `boolean` | No | Enable automatic deposit to Hyperliquid L1 after bridge (default: `true`) |
+| `defaultSlippage` | `number` | No | Default slippage tolerance in decimal format (0.005 = 0.5%) |
+
+### Example
+
+```typescript
+const mina = new Mina({
+  integrator: 'my-trading-app',
+  autoDeposit: true,
+  defaultSlippage: 0.005, // 0.5%
+});
+```
+
+---
+
+## Chain Methods
+
+### getChains()
+
+Get all supported source chains for bridging.
+
+```typescript
+async getChains(): Promise<Chain[]>
+```
+
+**Returns:** Array of 40+ supported origin chains with metadata.
+
+**Throws:** `ChainFetchError` if API fails and no cache available.
+
+**Example:**
+
+```typescript
+const chains = await mina.getChains();
+console.log(`${chains.length} chains supported`);
+// Displays: "50 chains supported"
+
+chains.forEach(chain => {
+  console.log(`${chain.name} (ID: ${chain.id})`);
+});
+```
+
+### getDestinationChains()
+
+Get destination chains (HyperEVM).
+
+```typescript
+getDestinationChains(): Chain[]
+```
+
+**Returns:** Array containing the HyperEVM chain.
+
+**Example:**
+
+```typescript
+const destinations = mina.getDestinationChains();
+console.log(destinations[0].name); // "HyperEVM"
+console.log(destinations[0].id);   // 999
+```
+
+### getChainsByRoutes(toChainId?)
+
+Get chains with valid bridge routes to a specific destination.
+
+```typescript
+async getChainsByRoutes(toChainId?: number): Promise<Chain[]>
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `toChainId` | `number` | `999` | Destination chain ID (HyperEVM) |
+
+**Example:**
+
+```typescript
+// Get only chains that can bridge to HyperEVM
+const bridgeableChains = await mina.getChainsByRoutes();
+console.log(`${bridgeableChains.length} chains can bridge to HyperEVM`);
+```
+
+### getChainById(chainId)
+
+Get a specific chain by its ID.
+
+```typescript
+async getChainById(chainId: number): Promise<Chain | undefined>
+```
+
+**Example:**
+
+```typescript
+const ethereum = await mina.getChainById(1);
+console.log(ethereum?.name); // "Ethereum"
+
+const arbitrum = await mina.getChainById(42161);
+console.log(arbitrum?.name); // "Arbitrum One"
+```
+
+---
+
+## Token Methods
+
+### getTokens(chainId)
+
+Get all available tokens for a specific chain.
+
+```typescript
+async getTokens(chainId: number): Promise<Token[]>
+```
+
+**Throws:** `TokenFetchError` if API fails and no cache available.
+
+**Example:**
+
+```typescript
+// Get Ethereum tokens
+const tokens = await mina.getTokens(1);
+console.log(`Found ${tokens.length} tokens on Ethereum`);
+
+// Find USDC
+const usdc = tokens.find(t => t.symbol === 'USDC');
+console.log(`USDC address: ${usdc?.address}`);
+```
+
+### getBridgeableTokens(chainId)
+
+Get tokens that can be bridged from a specific chain to HyperEVM.
+
+```typescript
+async getBridgeableTokens(chainId: number): Promise<Token[]>
+```
+
+**Example:**
+
+```typescript
+// Get only tokens that can bridge from Ethereum to HyperEVM
+const bridgeableTokens = await mina.getBridgeableTokens(1);
+console.log(`${bridgeableTokens.length} tokens can bridge to HyperEVM`);
+```
+
+### getDestinationTokens()
+
+Get tokens available on HyperEVM destination.
+
+```typescript
+getDestinationTokens(): Token[]
+```
+
+**Returns:** Array of tokens receivable on HyperEVM (USDC, HYPE).
+
+**Example:**
+
+```typescript
+const destTokens = mina.getDestinationTokens();
+console.log(destTokens.map(t => t.symbol)); // ['USDC', 'HYPE']
+```
+
+### getTokenByAddress(chainId, tokenAddress)
+
+Get a specific token by its address on a chain.
+
+```typescript
+async getTokenByAddress(
+  chainId: number,
+  tokenAddress: string
+): Promise<Token | undefined>
+```
+
+**Example:**
+
+```typescript
+const usdc = await mina.getTokenByAddress(
+  1,
+  '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
+);
+console.log(usdc?.symbol); // 'USDC'
+```
+
+---
+
+## Balance Methods
+
+### getBalance(chainId, tokenAddress, walletAddress)
+
+Get token balance for a wallet address.
+
+```typescript
+async getBalance(
+  chainId: number,
+  tokenAddress: string,
+  walletAddress: string
+): Promise<BalanceWithMetadata>
+```
+
+**Throws:** `BalanceFetchError` if API fails and no cache available.
+
+**Example:**
+
+```typescript
+import { NATIVE_TOKEN_ADDRESS } from '@mina-bridge/sdk';
+
+// Get USDC balance on Ethereum
+const balance = await mina.getBalance(
+  1,
+  '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+  '0xYourWallet...'
+);
+console.log(`Balance: ${balance.formatted} ${balance.token.symbol}`);
+console.log(`USD Value: $${balance.balanceUsd?.toFixed(2) ?? 'N/A'}`);
+
+// Get native ETH balance
+const ethBalance = await mina.getBalance(
+  1,
+  NATIVE_TOKEN_ADDRESS,
+  '0xYourWallet...'
+);
+console.log(`ETH Balance: ${ethBalance.formatted}`);
+```
+
+### getBalances(walletAddress, chainIds, tokenAddresses?)
+
+Get token balances across multiple chains in parallel.
+
+```typescript
+async getBalances(
+  walletAddress: string,
+  chainIds: number[],
+  tokenAddresses?: Record<number, string[]>
+): Promise<BalancesResponse>
+```
+
+**Example:**
+
+```typescript
+// Get native token balances on Ethereum and Arbitrum
+const response = await mina.getBalances('0x...', [1, 42161]);
+console.log(`Total USD: $${response.totalUsd.toFixed(2)}`);
+
+// Get specific token balances
+const response = await mina.getBalances('0x...', [1], {
+  1: ['0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'] // USDC on Ethereum
+});
+```
+
+### getChainBalances(walletAddress, chainId)
+
+Get all supported token balances for a specific chain.
+
+```typescript
+async getChainBalances(
+  walletAddress: string,
+  chainId: number
+): Promise<BalanceWithMetadata[]>
+```
+
+**Example:**
+
+```typescript
+const balances = await mina.getChainBalances('0x...', 1);
+for (const balance of balances) {
+  if (balance.hasBalance) {
+    console.log(`${balance.token.symbol}: ${balance.formatted}`);
+  }
+}
+```
+
+---
+
+## Quote Methods
+
+### getQuote(params, timeoutMs?)
+
+Get a single optimal bridge quote.
+
+```typescript
+async getQuote(
+  params: QuoteParams,
+  timeoutMs?: number
+): Promise<Quote>
+```
+
+**QuoteParams:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `fromChainId` | `number` | Yes | Source chain ID |
+| `toChainId` | `number` | No | Destination chain ID (default: 999 HyperEVM) |
+| `fromToken` | `string` | Yes | Source token address |
+| `toToken` | `string` | Yes | Destination token address |
+| `fromAmount` | `string` | Yes | Amount in smallest unit (wei) |
+| `fromAddress` | `string` | Yes | User's wallet address |
+| `toAddress` | `string` | No | Destination address (defaults to fromAddress) |
+| `slippageTolerance` | `number` | No | Slippage tolerance as percentage (0.5 = 0.5%) |
+| `routePreference` | `RoutePreference` | No | 'recommended', 'fastest', or 'cheapest' |
+
+**Throws:**
+- `InvalidQuoteParamsError` if parameters are invalid
+- `NoRouteFoundError` if no route is available
+- `NetworkError` if API request fails
+
+**Example:**
+
+```typescript
+const quote = await mina.getQuote({
+  fromChainId: 1,
+  toChainId: 999,
+  fromToken: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', // USDC
+  toToken: '0xb88339cb7199b77e23db6e890353e22632ba630f',   // HyperEVM USDC
+  fromAmount: '1000000000', // 1000 USDC (6 decimals)
+  fromAddress: '0x...',
+});
+
+console.log(`Will receive: ${quote.toAmount}`);
+console.log(`Estimated time: ${quote.estimatedTime}s`);
+console.log(`Total fees: $${quote.fees.totalUsd}`);
+console.log(`Price impact: ${quote.priceImpact * 100}%`);
+```
+
+### getQuotes(params, timeoutMs?)
+
+Get multiple bridge quotes for comparison.
+
+```typescript
+async getQuotes(
+  params: QuoteParams,
+  timeoutMs?: number
+): Promise<QuotesResponse>
+```
+
+**Returns:** `{ quotes: Quote[], recommendedIndex: number }`
+
+**Example:**
+
+```typescript
+const { quotes, recommendedIndex } = await mina.getQuotes({
+  fromChainId: 1,
+  toChainId: 999,
+  fromToken: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+  toToken: '0xb88339cb7199b77e23db6e890353e22632ba630f',
+  fromAmount: '1000000000',
+  fromAddress: '0x...',
+});
+
+console.log(`Found ${quotes.length} routes`);
+console.log(`Recommended: ${quotes[recommendedIndex].steps[0].tool}`);
+
+// Compare routes
+quotes.forEach((quote, i) => {
+  console.log(`Route ${i + 1}: ${quote.estimatedTime}s, $${quote.fees.totalUsd}`);
+});
+```
+
+---
+
+## Execution Methods
+
+### execute(options)
+
+Execute a bridge transaction.
+
+```typescript
+async execute(options: ExecuteOptions): Promise<ExecutionResult>
+```
+
+**ExecuteOptions:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `quote` | `Quote` | Yes | Quote to execute |
+| `signer` | `TransactionSigner` | Yes | Wallet signer (viem WalletClient compatible) |
+| `onStepChange` | `OnStepChange` | No | Callback for step status updates |
+| `onStatusChange` | `OnStatusChange` | No | Callback for overall status updates |
+| `onApprovalRequest` | `() => void` | No | Callback before approval transaction |
+| `onTransactionRequest` | `() => void` | No | Callback before main transaction |
+| `infiniteApproval` | `boolean` | No | Allow infinite token approval |
+
+**Throws:**
+- `QuoteExpiredError` if the quote has expired
+- `InvalidQuoteError` if the quote is malformed
+- `TransactionFailedError` if the transaction fails
+- `UserRejectedError` if the user rejects the transaction
+
+**Example:**
+
+```typescript
+const quote = await mina.getQuote({ ... });
+const result = await mina.execute({
+  quote,
+  signer: walletClient,
+  onStepChange: (step) => {
+    console.log(`Step ${step.stepId}: ${step.status}`);
+    if (step.txHash) {
+      console.log(`Transaction: ${step.txHash}`);
+    }
+  },
+  onStatusChange: (status) => {
+    console.log(`Progress: ${status.progress}%`);
+    console.log(`Status: ${status.substatus}`);
+  },
+  infiniteApproval: true,
+});
+
+if (result.status === 'completed') {
+  console.log('Bridge complete! TxHash:', result.txHash);
+  console.log('Received:', result.receivedAmount);
+}
+```
+
+### getExecutionStatus(executionId)
+
+Get the status of an execution by ID.
+
+```typescript
+getExecutionStatus(executionId: string): ExecutionStatusResult
+```
+
+**Example:**
+
+```typescript
+const result = await mina.execute({ quote, signer });
+const executionId = result.executionId;
+
+// Poll for status
+const status = mina.getExecutionStatus(executionId);
+console.log(`Progress: ${status.progress}%`);
+console.log(`Current step: ${status.currentStep?.type}`);
+
+if (status.error) {
+  console.error(`Failed: ${status.error.message}`);
+  console.log(`Recoverable: ${status.error.recoverable}`);
+}
+```
+
+### getStatus(txHash)
+
+Get the status of a bridge transaction by transaction hash.
+
+```typescript
+async getStatus(txHash: string): Promise<TransactionStatus | null>
+```
+
+**Example:**
+
+```typescript
+const status = await mina.getStatus('0x123...');
+if (status) {
+  console.log(`Status: ${status.status}`);
+  console.log(`Steps: ${status.steps.length}`);
+}
+```
+
+---
+
+## Deposit Detection Methods
+
+### detectUsdcArrival(walletAddress, options?)
+
+Detect USDC arrival on HyperEVM after a bridge transaction.
+
+```typescript
+async detectUsdcArrival(
+  walletAddress: string,
+  options?: DetectionOptions
+): Promise<UsdcArrivalResult>
+```
+
+**DetectionOptions:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `timeout` | `number` | 300000 | Timeout in milliseconds (5 minutes) |
+| `pollInterval` | `number` | 5000 | Polling interval in milliseconds |
+| `onPoll` | `(attempt, balance) => void` | - | Callback for each poll attempt |
+| `expectedAmount` | `string` | - | Expected amount for validation |
+
+**Example:**
+
+```typescript
+// After bridge execution completes
+const arrival = await mina.detectUsdcArrival('0x...', {
+  timeout: 300000, // 5 minutes
+  onPoll: (attempt, balance) => console.log(`Poll ${attempt}: ${balance}`),
+});
+
+if (arrival.detected) {
+  console.log(`USDC arrived: ${arrival.amountFormatted} USDC`);
+  if (mina.isAutoDepositEnabled()) {
+    // Proceed with deposit to Hyperliquid L1
+  }
+}
+```
+
+### snapshotUsdcBalance(walletAddress)
+
+Take a snapshot of USDC balance on HyperEVM before bridging.
+
+```typescript
+async snapshotUsdcBalance(walletAddress: string): Promise<string>
+```
+
+**Example:**
+
+```typescript
+const preBalance = await mina.snapshotUsdcBalance('0x...');
+// Store preBalance for later comparison
+```
+
+### detectUsdcArrivalFromSnapshot(walletAddress, previousBalance, options?)
+
+Detect USDC arrival starting from a known balance snapshot.
+
+```typescript
+async detectUsdcArrivalFromSnapshot(
+  walletAddress: string,
+  previousBalance: string,
+  options?: DetectionOptions
+): Promise<UsdcArrivalResult>
+```
+
+**Example:**
+
+```typescript
+// Before bridge
+const preBalance = await mina.snapshotUsdcBalance('0x...');
+
+// Execute bridge...
+await mina.execute({ quote, signer });
+
+// Detect arrival from snapshot
+const arrival = await mina.detectUsdcArrivalFromSnapshot(
+  '0x...',
+  preBalance,
+  { expectedAmount: quote.toAmount }
+);
+```
+
+---
+
+## Event System
+
+### on(event, callback)
+
+Subscribe to an SDK event.
+
+```typescript
+on<K extends SDKEventName>(
+  event: K,
+  callback: (data: SDKEventPayloads[K]) => void
+): void
+```
+
+**Available Events:**
+
+| Event | Payload | Description |
+|-------|---------|-------------|
+| `stepChanged` | `StepStatusPayload` | Step status updated |
+| `statusChanged` | `TransactionStatusPayload` | Overall status updated |
+| `executionStarted` | `{ executionId, quoteId, timestamp }` | Execution started |
+| `executionCompleted` | `{ executionId, txHash, receivedAmount }` | Execution completed |
+| `executionFailed` | `{ executionId, error, step }` | Execution failed |
+| `approvalRequired` | `{ tokenAddress, amount, spender }` | Approval needed |
+| `transactionSent` | `{ txHash, chainId, stepType }` | Transaction sent |
+| `transactionConfirmed` | `{ txHash, chainId, stepType }` | Transaction confirmed |
+
+**Example:**
+
+```typescript
+mina.on('stepChanged', (step) => {
+  console.log(`Step ${step.stepId}: ${step.status}`);
+});
+
+mina.on('executionCompleted', (result) => {
+  console.log('Bridge complete!', result.txHash);
+});
+```
+
+### off(event, callback)
+
+Unsubscribe from an SDK event.
+
+```typescript
+off<K extends SDKEventName>(
+  event: K,
+  callback: (data: SDKEventPayloads[K]) => void
+): void
+```
+
+**Example:**
+
+```typescript
+const handler = (step) => console.log(step);
+mina.on('stepChanged', handler);
+// Later...
+mina.off('stepChanged', handler);
+```
+
+### once(event, callback)
+
+Subscribe to an SDK event once (auto-unsubscribes after first call).
+
+```typescript
+once<K extends SDKEventName>(
+  event: K,
+  callback: (data: SDKEventPayloads[K]) => void
+): void
+```
+
+**Example:**
+
+```typescript
+mina.once('executionCompleted', (result) => {
+  console.log('First execution completed!', result.txHash);
+});
+```
+
+### getEmitter()
+
+Get the internal event emitter (for advanced use).
+
+```typescript
+getEmitter(): SDKEventEmitter
+```
+
+---
+
+## Cache Management
+
+### invalidateChainCache()
+
+Force a fresh fetch on next `getChains()` call.
+
+```typescript
+invalidateChainCache(): void
+```
+
+### invalidateTokenCache(chainId?)
+
+Force a fresh fetch on next `getTokens()` call.
+
+```typescript
+invalidateTokenCache(chainId?: number): void
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `chainId` | `number` | Optional chain ID to invalidate (invalidates all if not provided) |
+
+### invalidateBalanceCache(walletAddress?)
+
+Force a fresh fetch on next `getBalance()` call.
+
+```typescript
+invalidateBalanceCache(walletAddress?: string): void
+```
+
+### invalidateQuoteCache()
+
+Force fresh quotes on next `getQuote()` call.
+
+```typescript
+invalidateQuoteCache(): void
+```
+
+---
+
+## Utility Methods
+
+### getConfig()
+
+Get the current client configuration.
+
+```typescript
+getConfig(): MinaConfig
+```
+
+### isAutoDepositEnabled()
+
+Check if auto-deposit is enabled.
+
+```typescript
+isAutoDepositEnabled(): boolean
+```
+
+### setAutoDeposit(enabled)
+
+Set auto-deposit preference.
+
+```typescript
+setAutoDeposit(enabled: boolean): void
+```
+
+### validateQuote(quote)
+
+Validate a quote before execution.
+
+```typescript
+validateQuote(quote: Quote): void
+```
+
+**Throws:**
+- `QuoteExpiredError` if the quote has expired
+- `InvalidQuoteError` if the quote is malformed
+
+### validateBalance(quote, walletAddress)
+
+Validate user balance against a quote.
+
+```typescript
+async validateBalance(
+  quote: Quote,
+  walletAddress: string
+): Promise<BalanceValidation>
+```
+
+**Example:**
+
+```typescript
+const quote = await mina.getQuote({ ... });
+const validation = await mina.validateBalance(quote, '0x...');
+
+if (!validation.valid) {
+  for (const warning of validation.warnings) {
+    if (warning.type === 'INSUFFICIENT_BALANCE') {
+      console.error(`Need ${warning.shortfall} more ${warning.token.symbol}`);
+    } else if (warning.type === 'INSUFFICIENT_GAS') {
+      console.error(`Need more gas: ${warning.message}`);
+    }
+  }
+}
+```
+
+### checkBalance(chainId, tokenAddress, walletAddress, amount)
+
+Lightweight balance check without requiring a full quote.
+
+```typescript
+async checkBalance(
+  chainId: number,
+  tokenAddress: string,
+  walletAddress: string,
+  amount: string
+): Promise<BalanceCheckResult>
+```
+
+**Example:**
+
+```typescript
+// Check if user has 1000 USDC before showing quote
+const check = await mina.checkBalance(
+  1,                                          // Ethereum
+  '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', // USDC
+  '0x...',                                     // Wallet
+  '1000000000'                                 // 1000 USDC (6 decimals)
+);
+
+if (!check.sufficient) {
+  console.log(`Balance: ${check.formatted}, need ${check.shortfall} more`);
+}
+```

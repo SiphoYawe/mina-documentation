@@ -1,0 +1,211 @@
+---
+title: "Chains"
+description: "Discover supported source chains and bridge destinations"
+---
+
+# Chains
+
+The Mina SDK provides comprehensive chain discovery to identify which networks can bridge to HyperEVM.
+
+## Overview
+
+Mina supports bridging from **40+ EVM-compatible chains** to HyperEVM (chain ID 999). The SDK provides methods to discover available source chains, check route availability, and retrieve chain metadata.
+
+## Chain Methods
+
+### getChains()
+
+Fetches all supported source chains that can bridge to HyperEVM.
+
+```typescript
+import { Mina } from '@siphoyawe/mina-sdk';
+
+const mina = new Mina({ integrator: 'my-app' });
+const { chains, isStale, cachedAt } = await mina.getChains();
+
+console.log(`Found ${chains.length} supported chains`);
+chains.forEach(chain => {
+  console.log(`${chain.name} (${chain.id})`);
+});
+```
+
+### getDestinationChains()
+
+Returns available destination chains. Currently, HyperEVM is the only supported destination.
+
+```typescript
+const destinations = mina.getDestinationChains();
+// Returns: [{ id: 999, name: 'HyperEVM', ... }]
+```
+
+### getChainById(id)
+
+Retrieves a specific chain by its chain ID.
+
+```typescript
+// Get Arbitrum chain info
+const arbitrum = await mina.getChainById(42161);
+console.log(arbitrum?.name); // "Arbitrum One"
+
+// Get HyperEVM chain info
+const hyperEvm = await mina.getChainById(999);
+console.log(hyperEvm?.name); // "HyperEVM"
+```
+
+## Response Types
+
+### ChainsResponse
+
+The response from `getChains()` includes metadata about data freshness:
+
+```typescript
+interface ChainsResponse {
+  /** Array of chain data */
+  chains: Chain[];
+  /** Whether the data is from stale cache */
+  isStale: boolean;
+  /** Timestamp when data was cached (null if fresh from API) */
+  cachedAt: number | null;
+}
+```
+
+### Chain
+
+Each chain object contains:
+
+```typescript
+interface Chain {
+  /** Chain ID (e.g., 1 for Ethereum mainnet) */
+  id: number;
+  /** Chain key/slug (e.g., "eth", "arb") */
+  key: string;
+  /** Human-readable chain name */
+  name: string;
+  /** URL to chain logo image */
+  logoUrl: string;
+  /** Native gas token for the chain */
+  nativeToken: Token;
+  /** Whether this is an EVM-compatible chain */
+  isEvm: boolean;
+}
+```
+
+## Supported Source Chains
+
+The SDK supports bridging from 40+ EVM-compatible chains, including:
+
+| Chain | Chain ID | Native Token |
+|-------|----------|--------------|
+| Ethereum | 1 | ETH |
+| Arbitrum One | 42161 | ETH |
+| Optimism | 10 | ETH |
+| Base | 8453 | ETH |
+| Polygon | 137 | MATIC |
+| Avalanche C-Chain | 43114 | AVAX |
+| BNB Chain | 56 | BNB |
+| Fantom | 250 | FTM |
+| zkSync Era | 324 | ETH |
+| Linea | 59144 | ETH |
+
+<Note>
+The complete list of supported chains is fetched dynamically from the LI.FI API. Use `getChains()` to get the current list.
+</Note>
+
+## Destination: HyperEVM
+
+HyperEVM (chain ID **999**) is the primary destination chain for Mina bridges. It's the EVM-compatible execution environment on Hyperliquid.
+
+```typescript
+// HyperEVM is always available as a destination
+const HYPEREVM_CHAIN_ID = 999;
+
+const hyperEvm = await mina.getChainById(HYPEREVM_CHAIN_ID);
+// {
+//   id: 999,
+//   key: 'hyperevm',
+//   name: 'HyperEVM',
+//   logoUrl: 'https://app.hyperliquid.xyz/icons/hyperliquid-logo.svg',
+//   nativeToken: { symbol: 'HYPE', decimals: 18, ... },
+//   isEvm: true
+// }
+```
+
+## Caching Behavior
+
+Chain data is cached for **30 minutes** to minimize API calls:
+
+- Fresh requests return data directly from the API
+- Subsequent requests within 30 minutes return cached data
+- If the API fails, stale cache may be returned with `isStale: true`
+
+```typescript
+const response = await mina.getChains();
+
+if (response.isStale) {
+  console.warn('Using stale chain data from:', new Date(response.cachedAt!));
+}
+```
+
+## Error Handling
+
+The SDK throws typed errors when chain fetching fails:
+
+```typescript
+import { ChainFetchError } from '@siphoyawe/mina-sdk';
+
+try {
+  const { chains } = await mina.getChains();
+} catch (error) {
+  if (error instanceof ChainFetchError) {
+    console.error('Failed to fetch chains:', error.message);
+
+    // Check if cached data is available
+    if (error.cachedAvailable) {
+      console.log('Stale cache is available as fallback');
+    }
+  }
+}
+```
+
+## Example: Chain Selector
+
+A common pattern is building a chain selector for your UI:
+
+```typescript
+import { Mina, Chain } from '@siphoyawe/mina-sdk';
+
+const mina = new Mina({ integrator: 'my-app' });
+
+async function getChainOptions(): Promise<Array<{
+  value: number;
+  label: string;
+  logo: string;
+}>> {
+  const { chains } = await mina.getChains();
+
+  return chains.map(chain => ({
+    value: chain.id,
+    label: chain.name,
+    logo: chain.logoUrl,
+  }));
+}
+
+// Usage in React
+const chainOptions = await getChainOptions();
+// [
+//   { value: 1, label: 'Ethereum', logo: '...' },
+//   { value: 42161, label: 'Arbitrum One', logo: '...' },
+//   ...
+// ]
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Tokens" icon="coins" href="/concepts/tokens">
+    Discover bridgeable tokens on each chain
+  </Card>
+  <Card title="Quotes" icon="calculator" href="/concepts/quotes">
+    Get bridge quotes for your transfers
+  </Card>
+</CardGroup>

@@ -1,0 +1,518 @@
+---
+title: 'Execute Service'
+description: 'Bridge transaction execution with step tracking'
+---
+
+The Execute Service handles bridge transaction execution via the LI.FI API, including token approvals, transaction signing, status polling, and step-by-step progress tracking.
+
+## Exports
+
+```typescript
+import {
+  execute,
+  validateQuote,
+  QuoteExpiredError,
+  InvalidQuoteError,
+  isQuoteExpiredError,
+  isInvalidQuoteError,
+} from '@mina-bridge/sdk/services/execute';
+```
+
+---
+
+## Functions
+
+### execute(config)
+
+Execute a bridge transaction from a quote.
+
+```typescript
+async function execute(config: ExecuteConfig): Promise<ExecutionResult>
+```
+
+### ExecuteConfig
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `quote` | `Quote` | Yes | - | Quote to execute |
+| `signer` | `TransactionSigner` | Yes | - | Wallet signer (viem WalletClient compatible) |
+| `onStepChange` | `OnStepChange` | No | - | Callback for step status updates |
+| `onStatusChange` | `OnStatusChange` | No | - | Callback for overall status updates |
+| `onApprovalRequest` | `() => void` | No | - | Callback before approval transaction |
+| `onTransactionRequest` | `() => void` | No | - | Callback before main transaction |
+| `infiniteApproval` | `boolean` | No | `false` | Allow infinite token approval |
+| `emitter` | `SDKEventEmitter` | No | - | Event emitter for SDK events |
+
+**Returns:** `ExecutionResult`
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `executionId` | `string` | Unique execution ID for tracking |
+| `status` | `'pending' \| 'executing' \| 'completed' \| 'failed'` | Overall status |
+| `steps` | `StepStatus[]` | Array of step statuses |
+| `txHash` | `string \| undefined` | Final transaction hash |
+| `fromAmount` | `string \| undefined` | Input amount |
+| `toAmount` | `string \| undefined` | Expected output amount |
+| `receivedAmount` | `string \| undefined` | Actual received amount |
+| `depositTxHash` | `string \| null` | Deposit transaction hash (if auto-deposit) |
+| `error` | `Error \| undefined` | Error details (if failed) |
+
+**Throws:**
+- `QuoteExpiredError` if quote has expired (5 minute max age)
+- `InvalidQuoteError` if quote is malformed
+- `TransactionFailedError` if transaction fails on-chain
+- `UserRejectedError` if user rejects transaction
+- `NetworkError` if network request fails
+
+---
+
+### Execution Flow
+
+The execute function processes a quote through these stages:
+
+```
+1. VALIDATION
+   - Validate quote structure
+   - Check quote expiration (5 minute max)
+
+2. APPROVAL (if needed)
+   - Check current token allowance
+   - Request approval transaction
+   - Wait for approval confirmation
+
+3. EXECUTION
+   - Submit bridge/swap transaction
+   - Update step status to 'executing'
+
+4. BRIDGING
+   - Poll LI.FI status API (5 second interval)
+   - Update progress based on substatus
+   - Wait up to 10 minutes for completion
+
+5. COMPLETION
+   - Mark all steps as completed
+   - Return final execution result
+```
+
+---
+
+### Example: Basic Execution
+
+```typescript
+import { execute } from '@mina-bridge/sdk';
+
+const result = await execute({
+  quote,
+  signer: walletClient,
+  infiniteApproval: true,
+});
+
+if (result.status === 'completed') {
+  console.log('Bridge complete!');
+  console.log('TxHash:', result.txHash);
+  console.log('Received:', result.receivedAmount);
+} else if (result.status === 'failed') {
+  console.error('Bridge failed:', result.error?.message);
+}
+```
+
+---
+
+### Example: With Progress Callbacks
+
+```typescript
+const result = await execute({
+  quote,
+  signer: walletClient,
+  onStepChange: (step) => {
+    console.log(`Step ${step.stepId}: ${step.status}`);
+
+    if (step.txHash) {
+      console.log(`  Transaction: ${step.txHash}`);
+    }
+
+    if (step.error) {
+      console.error(`  Error: ${step.error.message}`);
+    }
+  },
+  onStatusChange: (status) => {
+    console.log(`\n=== Status Update ===`);
+    console.log(`Status: ${status.status}`);
+    console.log(`Substatus: ${status.substatus}`);
+    console.log(`Progress: ${status.progress}%`);
+    console.log(`Step: ${status.currentStep}/${status.totalSteps}`);
+
+    if (status.txHash) {
+      console.log(`TxHash: ${status.txHash}`);
+    }
+
+    if (status.receivingTxHash) {
+      console.log(`Receiving TxHash: ${status.receivingTxHash}`);
+    }
+  },
+  onApprovalRequest: () => {
+    console.log('Approval required - please confirm in wallet');
+  },
+  onTransactionRequest: () => {
+    console.log('Transaction ready - please confirm in wallet');
+  },
+});
+```
+
+---
+
+### Example: With Event Emitter
+
+```typescript
+import { SDKEventEmitter, SDK_EVENTS } from '@mina-bridge/sdk';
+
+const emitter = new SDKEventEmitter();
+
+// Subscribe to events
+emitter.on(SDK_EVENTS.EXECUTION_STARTED, ({ executionId, quoteId }) => {
+  console.log(`Execution ${executionId} started for quote ${quoteId}`);
+});
+
+emitter.on(SDK_EVENTS.STEP_CHANGED, (step) => {
+  console.log(`Step ${step.stepId}: ${step.status}`);
+});
+
+emitter.on(SDK_EVENTS.TRANSACTION_SENT, ({ txHash, chainId, stepType }) => {
+  console.log(`Transaction sent: ${txHash} on chain ${chainId} (${stepType})`);
+});
+
+emitter.on(SDK_EVENTS.EXECUTION_COMPLETED, ({ executionId, txHash }) => {
+  console.log(`Execution ${executionId} completed: ${txHash}`);
+});
+
+emitter.on(SDK_EVENTS.EXECUTION_FAILED, ({ executionId, error, step }) => {
+  console.error(`Execution ${executionId} failed at step ${step}:`, error);
+});
+
+// Execute with emitter
+const result = await execute({
+  quote,
+  signer,
+  emitter,
+});
+```
+
+---
+
+### validateQuote(quote)
+
+Validate a quote before execution.
+
+```typescript
+function validateQuote(quote: Quote): void
+```
+
+**Throws:**
+- `QuoteExpiredError` if quote has expired
+- `InvalidQuoteError` if quote is malformed
+
+**Validation Checks:**
+1. Quote is not null/undefined
+2. Quote has a valid ID
+3. Quote has at least one execution step
+4. Quote has fromAmount and toAmount
+5. Quote has not expired (expiresAt timestamp)
+6. Quote age does not exceed 5 minutes
+
+**Example:**
+
+```typescript
+import { validateQuote } from '@mina-bridge/sdk';
+
+try {
+  validateQuote(quote);
+  console.log('Quote is valid');
+} catch (error) {
+  if (isQuoteExpiredError(error)) {
+    console.error('Quote expired at:', new Date(error.expiredAt));
+    // Fetch a new quote
+  } else if (isInvalidQuoteError(error)) {
+    console.error('Invalid quote:', error.reason);
+  }
+}
+```
+
+---
+
+## Error Types
+
+### QuoteExpiredError
+
+Thrown when a quote has exceeded its validity period.
+
+```typescript
+class QuoteExpiredError extends MinaError {
+  readonly code: 'QUOTE_EXPIRED';
+  readonly recoverable: true;
+  readonly recoveryAction: 'fetch_new_quote';
+  readonly quoteId: string;
+  readonly expiredAt: number;
+}
+```
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `quoteId` | `string` | ID of the expired quote |
+| `expiredAt` | `number` | Timestamp when quote expired |
+
+**Example:**
+
+```typescript
+try {
+  const result = await execute({ quote, signer });
+} catch (error) {
+  if (isQuoteExpiredError(error)) {
+    console.error('Quote expired:', error.quoteId);
+    console.log('Expired at:', new Date(error.expiredAt));
+
+    // Fetch new quote and retry
+    const newQuote = await mina.getQuote(originalParams);
+    const result = await execute({ quote: newQuote, signer });
+  }
+}
+```
+
+---
+
+### InvalidQuoteError
+
+Thrown when a quote is malformed or missing required data.
+
+```typescript
+class InvalidQuoteError extends MinaError {
+  readonly code: 'INVALID_QUOTE';
+  readonly recoverable: false;
+  readonly reason: string;
+}
+```
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `reason` | `string` | Why the quote is invalid |
+
+**Reasons:**
+- `null_quote` - Quote is null or undefined
+- `missing_id` - Quote has no ID
+- `no_steps` - Quote has no execution steps
+- `missing_amounts` - Quote is missing amount information
+
+**Example:**
+
+```typescript
+try {
+  const result = await execute({ quote, signer });
+} catch (error) {
+  if (isInvalidQuoteError(error)) {
+    console.error('Quote is invalid:', error.reason);
+    // Fetch a new quote
+  }
+}
+```
+
+---
+
+## Types
+
+### TransactionSigner
+
+Compatible with viem WalletClient and ethers Signer.
+
+```typescript
+interface TransactionSigner {
+  /** Sign and send a transaction, returns tx hash */
+  sendTransaction: (request: TransactionRequest) => Promise<string>;
+  /** Get the signer's address */
+  getAddress: () => Promise<string>;
+  /** Get the current chain ID */
+  getChainId: () => Promise<number>;
+}
+```
+
+### TransactionRequest
+
+```typescript
+interface TransactionRequest {
+  to: string;
+  data: string;
+  value: string;
+  gasLimit?: string;
+  gasPrice?: string;
+  chainId: number;
+}
+```
+
+### ExecutionStatus
+
+```typescript
+type ExecutionStatus =
+  | 'idle'
+  | 'approving'
+  | 'approved'
+  | 'executing'
+  | 'bridging'
+  | 'completed'
+  | 'failed';
+```
+
+### StepStatus
+
+```typescript
+interface StepStatus {
+  stepId: string;
+  stepType?: StepType;
+  status: 'pending' | 'executing' | 'completed' | 'failed';
+  txHash?: string;
+  error?: string;
+  updatedAt: number;
+}
+```
+
+### StepStatusPayload
+
+Payload passed to `onStepChange` callback.
+
+```typescript
+interface StepStatusPayload {
+  stepId: string;
+  step: StepType;
+  status: 'pending' | 'active' | 'completed' | 'failed';
+  txHash: string | null;
+  error: Error | null;
+  timestamp: number;
+}
+```
+
+### TransactionStatusPayload
+
+Payload passed to `onStatusChange` callback.
+
+```typescript
+interface TransactionStatusPayload {
+  status: 'pending' | 'in_progress' | 'completed' | 'failed';
+  substatus: string;
+  currentStep: number;
+  totalSteps: number;
+  fromAmount: string;
+  toAmount: string | null;
+  txHash: string;
+  receivingTxHash: string | null;
+  progress: number;
+  estimatedTime: number;
+}
+```
+
+---
+
+## Constants
+
+### Timing Constants
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `MAX_QUOTE_AGE_MS` | `300000` | 5 minutes - maximum quote validity |
+| `STATUS_POLL_INTERVAL_MS` | `5000` | 5 seconds - polling interval |
+| `MAX_EXECUTION_WAIT_MS` | `600000` | 10 minutes - maximum wait time |
+| `APPROVAL_CONFIRMATION_WAIT_MS` | `3000` | 3 seconds - approval wait |
+
+---
+
+## Common Patterns
+
+### Retry on Expiration
+
+```typescript
+async function executeWithRetry(
+  params: QuoteParams,
+  signer: TransactionSigner,
+  maxRetries = 3
+) {
+  let retries = 0;
+
+  while (retries < maxRetries) {
+    try {
+      const quote = await mina.getQuote(params);
+      return await execute({ quote, signer });
+    } catch (error) {
+      if (isQuoteExpiredError(error) && retries < maxRetries - 1) {
+        console.log('Quote expired, fetching new quote...');
+        retries++;
+        continue;
+      }
+      throw error;
+    }
+  }
+}
+```
+
+### Progress UI State Machine
+
+```typescript
+type UIState = 'idle' | 'approving' | 'sending' | 'bridging' | 'complete' | 'error';
+
+function executeWithUI(quote: Quote, signer: TransactionSigner) {
+  let uiState: UIState = 'idle';
+
+  return execute({
+    quote,
+    signer,
+    onApprovalRequest: () => {
+      uiState = 'approving';
+      updateUI(uiState);
+    },
+    onTransactionRequest: () => {
+      uiState = 'sending';
+      updateUI(uiState);
+    },
+    onStatusChange: (status) => {
+      if (status.status === 'in_progress') {
+        uiState = 'bridging';
+      } else if (status.status === 'completed') {
+        uiState = 'complete';
+      } else if (status.status === 'failed') {
+        uiState = 'error';
+      }
+      updateUI(uiState, status);
+    },
+  });
+}
+```
+
+### Cancel Support
+
+```typescript
+// The execute function doesn't support cancellation directly,
+// but you can track the execution and handle UI accordingly
+
+let currentExecutionId: string | null = null;
+let cancelled = false;
+
+async function startExecution(quote: Quote, signer: TransactionSigner) {
+  cancelled = false;
+
+  const result = await execute({
+    quote,
+    signer,
+    onStatusChange: (status) => {
+      if (cancelled) {
+        // Can't cancel on-chain, but can stop UI updates
+        return;
+      }
+      // Update UI
+    },
+  });
+
+  currentExecutionId = result.executionId;
+  return result;
+}
+
+function cancelUI() {
+  cancelled = true;
+  // Note: The transaction will still complete on-chain
+  console.warn('UI cancelled, but transaction may still complete');
+}
+```

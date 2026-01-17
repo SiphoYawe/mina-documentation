@@ -1,0 +1,357 @@
+---
+title: "Slippage"
+description: "Configure slippage tolerance for bridge transactions"
+---
+
+# Slippage
+
+Slippage tolerance protects you from receiving significantly less than expected due to price movements during transaction execution.
+
+## Overview
+
+When bridging tokens, the actual amount received may differ from the quoted amount due to:
+- Market price fluctuations
+- Liquidity depth changes
+- Transaction delays
+
+Slippage tolerance sets the maximum acceptable difference between quoted and received amounts.
+
+## Slippage Constraints
+
+The SDK enforces strict slippage boundaries:
+
+| Constraint | Value | Format |
+|------------|-------|--------|
+| **Minimum** | 0.01% | `0.01` |
+| **Maximum** | 5.0% | `5.0` |
+| **Default** | 0.5% | `0.5` |
+
+### Preset Values
+
+Common slippage values for quick selection:
+
+| Preset | Value | Use Case |
+|--------|-------|----------|
+| Low | 0.1% | Stable pairs (USDC/USDT) |
+| Medium | 0.5% | Standard transactions |
+| High | 1.0% | Volatile markets |
+
+```typescript
+import { SLIPPAGE_CONSTRAINTS } from '@siphoyawe/mina-sdk';
+
+console.log(SLIPPAGE_CONSTRAINTS);
+// {
+//   MIN: 0.01,
+//   MAX: 5.0,
+//   DEFAULT: 0.5,
+//   PRESETS: [0.1, 0.5, 1.0]
+// }
+```
+
+## Setting Slippage
+
+### In Constructor (Default)
+
+Set a default slippage for all quotes:
+
+```typescript
+import { Mina } from '@siphoyawe/mina-sdk';
+
+const mina = new Mina({
+  integrator: 'my-app',
+  defaultSlippage: 0.005, // 0.5% in decimal format
+});
+```
+
+<Note>
+The constructor uses **decimal format** (0.005 = 0.5%) for backward compatibility, while quote parameters use **percentage format** (0.5 = 0.5%).
+</Note>
+
+### Per-Request Override
+
+Override slippage for individual quotes:
+
+```typescript
+// Using slippageTolerance (percentage format - recommended)
+const quote = await mina.getQuote({
+  fromChainId: 42161,
+  toChainId: 999,
+  fromToken: '0x...',
+  toToken: '0x...',
+  fromAmount: '100000000',
+  fromAddress: '0x...',
+  slippageTolerance: 0.5, // 0.5%
+});
+
+// Or using slippage (decimal format - deprecated)
+const quoteLegacy = await mina.getQuote({
+  ...params,
+  slippage: 0.005, // 0.5% (deprecated, use slippageTolerance)
+});
+```
+
+## Quote Response Fields
+
+The quote includes slippage-related information:
+
+```typescript
+const quote = await mina.getQuote({
+  ...params,
+  slippageTolerance: 0.5,
+});
+
+console.log(`Slippage Tolerance: ${quote.slippageTolerance}%`);
+console.log(`Expected Output: ${quote.toAmount}`);
+console.log(`Minimum Received: ${quote.minimumReceived}`);
+console.log(`Minimum (Formatted): ${quote.minimumReceivedFormatted}`);
+```
+
+### Example Output
+
+For a 100 USDC bridge with 0.5% slippage:
+
+```
+Slippage Tolerance: 0.5%
+Expected Output: 99700000  (99.70 USDC after fees)
+Minimum Received: 99201500 (98.70 USDC minimum)
+Minimum (Formatted): 99.20
+```
+
+## Slippage Selection Guide
+
+<Tabs>
+  <Tab title="Stablecoins">
+    For stable pairs (USDC/USDT):
+
+    ```typescript
+    const quote = await mina.getQuote({
+      ...params,
+      slippageTolerance: 0.1, // 0.1% is usually sufficient
+    });
+    ```
+
+    Stablecoin bridges typically experience minimal price movement.
+  </Tab>
+  <Tab title="Standard">
+    For most tokens:
+
+    ```typescript
+    const quote = await mina.getQuote({
+      ...params,
+      slippageTolerance: 0.5, // 0.5% is the recommended default
+    });
+    ```
+
+    The default 0.5% covers normal market conditions.
+  </Tab>
+  <Tab title="Volatile">
+    For volatile markets or large trades:
+
+    ```typescript
+    const quote = await mina.getQuote({
+      ...params,
+      slippageTolerance: 1.0, // 1% for higher volatility
+    });
+    ```
+
+    Higher slippage reduces failed transactions during volatility.
+  </Tab>
+</Tabs>
+
+## Building a Slippage Selector
+
+```typescript
+import { Mina, SLIPPAGE_CONSTRAINTS } from '@siphoyawe/mina-sdk';
+
+interface SlippageOption {
+  label: string;
+  value: number;
+  description: string;
+}
+
+const slippageOptions: SlippageOption[] = [
+  { label: '0.1%', value: 0.1, description: 'Low - For stablecoins' },
+  { label: '0.5%', value: 0.5, description: 'Medium - Recommended' },
+  { label: '1.0%', value: 1.0, description: 'High - For volatile tokens' },
+];
+
+function validateCustomSlippage(value: number): { valid: boolean; error?: string } {
+  if (value < SLIPPAGE_CONSTRAINTS.MIN) {
+    return {
+      valid: false,
+      error: `Minimum slippage is ${SLIPPAGE_CONSTRAINTS.MIN}%`
+    };
+  }
+  if (value > SLIPPAGE_CONSTRAINTS.MAX) {
+    return {
+      valid: false,
+      error: `Maximum slippage is ${SLIPPAGE_CONSTRAINTS.MAX}%`
+    };
+  }
+  return { valid: true };
+}
+
+// Usage
+const customSlippage = 3.5;
+const validation = validateCustomSlippage(customSlippage);
+
+if (!validation.valid) {
+  console.error(validation.error);
+} else {
+  const quote = await mina.getQuote({
+    ...params,
+    slippageTolerance: customSlippage,
+  });
+}
+```
+
+## Error Handling
+
+The SDK throws `InvalidSlippageError` for out-of-range values:
+
+```typescript
+import { InvalidSlippageError } from '@siphoyawe/mina-sdk';
+
+try {
+  const quote = await mina.getQuote({
+    ...params,
+    slippageTolerance: 10, // 10% - exceeds maximum
+  });
+} catch (error) {
+  if (error instanceof InvalidSlippageError) {
+    console.error(`Invalid slippage: ${error.message}`);
+    console.error(`Provided: ${error.provided}%`);
+    console.error(`Valid range: ${error.min}% - ${error.max}%`);
+  }
+}
+```
+
+## Slippage and Price Impact
+
+Slippage tolerance is different from price impact:
+
+| Concept | Description |
+|---------|-------------|
+| **Slippage Tolerance** | Maximum acceptable price difference you set |
+| **Price Impact** | Actual market impact of your trade |
+
+```typescript
+const quote = await mina.getQuote(params);
+
+// Price impact is calculated automatically
+console.log(`Price Impact: ${(quote.priceImpact * 100).toFixed(2)}%`);
+console.log(`High Impact Warning: ${quote.highImpact}`);
+
+// Your slippage tolerance
+console.log(`Slippage Tolerance: ${quote.slippageTolerance}%`);
+
+// Transaction will fail if actual slippage exceeds tolerance
+```
+
+<Warning>
+If price impact exceeds your slippage tolerance, the transaction will revert. Consider increasing slippage or reducing trade size for high-impact trades.
+</Warning>
+
+## Best Practices
+
+1. **Start with 0.5%** - The default works for most transactions
+2. **Use presets** - 0.1%, 0.5%, 1.0% cover common scenarios
+3. **Increase for large trades** - Larger trades may need higher slippage
+4. **Consider market conditions** - Volatile markets need higher tolerance
+5. **Warn on high values** - Alert users when slippage exceeds 1%
+
+```typescript
+function getRecommendedSlippage(params: {
+  tokenPair: 'stable' | 'volatile' | 'standard';
+  tradeSize: 'small' | 'medium' | 'large';
+}): number {
+  if (params.tokenPair === 'stable') {
+    return 0.1;
+  }
+
+  if (params.tokenPair === 'volatile' || params.tradeSize === 'large') {
+    return 1.0;
+  }
+
+  return 0.5; // Default recommendation
+}
+```
+
+## React Example
+
+```typescript
+import { useState } from 'react';
+import { SLIPPAGE_CONSTRAINTS } from '@siphoyawe/mina-sdk';
+
+function SlippageSelector({
+  value,
+  onChange,
+}: {
+  value: number;
+  onChange: (value: number) => void;
+}) {
+  const [customValue, setCustomValue] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  const presets = SLIPPAGE_CONSTRAINTS.PRESETS;
+
+  const handleCustomChange = (input: string) => {
+    setCustomValue(input);
+    const parsed = parseFloat(input);
+
+    if (isNaN(parsed)) {
+      setError('Enter a valid number');
+      return;
+    }
+
+    if (parsed < SLIPPAGE_CONSTRAINTS.MIN) {
+      setError(`Min: ${SLIPPAGE_CONSTRAINTS.MIN}%`);
+      return;
+    }
+
+    if (parsed > SLIPPAGE_CONSTRAINTS.MAX) {
+      setError(`Max: ${SLIPPAGE_CONSTRAINTS.MAX}%`);
+      return;
+    }
+
+    setError(null);
+    onChange(parsed);
+  };
+
+  return (
+    <div>
+      <div className="presets">
+        {presets.map((preset) => (
+          <button
+            key={preset}
+            onClick={() => onChange(preset)}
+            className={value === preset ? 'active' : ''}
+          >
+            {preset}%
+          </button>
+        ))}
+      </div>
+      <div className="custom">
+        <input
+          type="text"
+          placeholder="Custom"
+          value={customValue}
+          onChange={(e) => handleCustomChange(e.target.value)}
+        />
+        {error && <span className="error">{error}</span>}
+      </div>
+    </div>
+  );
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quotes" icon="calculator" href="/concepts/quotes">
+    Generate quotes with slippage
+  </Card>
+  <Card title="Execution" icon="play" href="/concepts/execution">
+    Execute transactions
+  </Card>
+</CardGroup>

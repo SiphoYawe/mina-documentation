@@ -1,0 +1,350 @@
+---
+title: "Auto-Deposit"
+description: "Automatic deposit flow from HyperEVM to Hyperliquid L1 trading account"
+---
+
+# Auto-Deposit
+
+The Mina SDK provides automatic deposit functionality that transfers bridged USDC from HyperEVM to your Hyperliquid L1 trading account.
+
+## Overview
+
+When `autoDeposit` is enabled, the SDK handles the complete flow:
+
+1. **USDC Arrival Detection** - Monitor HyperEVM for bridged USDC
+2. **Deposit Execution** - Transfer USDC to Hyperliquid L1 via CoreDepositWallet
+3. **L1 Confirmation** - Wait for deposit to appear in trading account
+
+This eliminates manual steps and provides a seamless bridge-to-trade experience.
+
+## Auto-Deposit Flow
+
+```
+Source Chain          HyperEVM (999)              Hyperliquid L1
+    |                     |                            |
+    |  Bridge USDC        |                            |
+    |-------------------->|                            |
+    |                     |                            |
+    |              Detect Arrival                      |
+    |                     |                            |
+    |              Execute Deposit                     |
+    |                     |--------------------------->|
+    |                     |                            |
+    |                     |        L1 Confirmation     |
+    |                     |                            |
+    |                     |    Trading Account Ready   |
+```
+
+## Configuration
+
+Enable auto-deposit in the Mina client configuration:
+
+```typescript
+import { Mina } from '@siphoyawe/mina-sdk';
+
+// Auto-deposit enabled (default)
+const mina = new Mina({
+  integrator: 'my-app',
+  autoDeposit: true,  // This is the default
+});
+
+// Disable auto-deposit - USDC stays on HyperEVM
+const minaManual = new Mina({
+  integrator: 'my-app',
+  autoDeposit: false,
+});
+```
+
+## Detection Methods
+
+### detectUsdcArrival()
+
+Monitors for USDC arrival on HyperEVM after a bridge transaction.
+
+```typescript
+import { detectUsdcArrival } from '@siphoyawe/mina-sdk';
+
+const result = await detectUsdcArrival('0x...', {
+  timeout: 300000, // 5 minutes
+  pollInterval: 5000, // Check every 5 seconds
+  onPoll: (attempt, balance) => {
+    console.log(`Poll ${attempt}: Balance is ${balance}`);
+  },
+  expectedAmount: '100000000', // Optional: expected amount
+});
+
+if (result.detected) {
+  console.log(`USDC arrived: ${result.amountFormatted} USDC`);
+  console.log(`Previous balance: ${result.previousBalance}`);
+  console.log(`Current balance: ${result.currentBalance}`);
+}
+```
+
+### snapshotUsdcBalance()
+
+Creates a balance snapshot before bridging for accurate arrival detection.
+
+```typescript
+import { snapshotUsdcBalance, detectUsdcArrivalFromSnapshot } from '@siphoyawe/mina-sdk';
+
+// Before bridge
+const preBridgeBalance = await snapshotUsdcBalance('0x...');
+
+// ... execute bridge ...
+
+// After bridge, detect from snapshot
+const result = await detectUsdcArrivalFromSnapshot(
+  '0x...',
+  preBridgeBalance,
+  { timeout: 300000 }
+);
+```
+
+## Deposit Execution
+
+### executeDeposit()
+
+Executes a deposit from HyperEVM to Hyperliquid L1.
+
+```typescript
+import { executeDeposit, DestinationDex } from '@siphoyawe/mina-sdk';
+
+const result = await executeDeposit(walletSigner, {
+  amount: '100000000', // 100 USDC (6 decimals)
+  walletAddress: '0x...',
+  destinationDex: DestinationDex.PERPS, // Trading account
+  onStatusChange: (status) => {
+    console.log(`Deposit status: ${status}`);
+  },
+  onDepositSubmitted: (txHash) => {
+    console.log(`Deposit tx submitted: ${txHash}`);
+  },
+  onApprovalSubmitted: (txHash) => {
+    console.log(`Approval tx submitted: ${txHash}`);
+  },
+  infiniteApproval: false,
+});
+
+if (result.success) {
+  console.log(`Deposited ${result.amountFormatted} USDC`);
+  console.log(`Deposit tx: ${result.depositTxHash}`);
+}
+```
+
+## L1 Confirmation
+
+### monitorL1Confirmation()
+
+Monitors for deposit confirmation on Hyperliquid L1.
+
+```typescript
+import { monitorL1Confirmation } from '@siphoyawe/mina-sdk';
+
+const { result, controller } = monitorL1Confirmation(
+  '0x...', // Wallet address
+  '100000000', // Expected amount
+  '0xabc...', // HyperEVM deposit tx hash
+  {
+    timeout: 120000, // 2 minutes
+    pollInterval: 5000,
+    onProgress: (progress) => {
+      console.log(`Elapsed: ${progress.elapsed}ms, Attempt: ${progress.attempt}`);
+      console.log(`Current L1 balance: ${progress.currentBalance}`);
+    },
+    onTimeoutWarning: (warning) => {
+      console.log('Timeout warning - monitoring continues...');
+    },
+  }
+);
+
+// Can use controller while monitoring
+const status = controller.getStatus();
+if (status.elapsed > 60000) {
+  controller.extendTimeout(60000); // Add 1 more minute
+}
+
+// Or cancel if needed
+// controller.cancel();
+
+// Await the result
+const confirmation = await result;
+console.log(`Deposit confirmed: ${confirmation.amountFormatted} USDC`);
+console.log(`Final balance: ${confirmation.finalBalanceFormatted}`);
+```
+
+## Constants
+
+Key constants for the auto-deposit flow:
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `MINIMUM_DEPOSIT_AMOUNT` | 5,000,000 (5 USDC) | Minimum deposit to L1 |
+| `CORE_DEPOSIT_WALLET_ADDRESS` | `0x6B9E773128f453f5c2C60935Ee2DE2CBc5390A24` | CoreDepositWallet contract |
+| `ARRIVAL_DETECTION_TIMEOUT_MS` | 300,000 (5 min) | USDC arrival detection timeout |
+| `L1_CONFIRMATION_TIMEOUT_MS` | 120,000 (2 min) | L1 confirmation timeout |
+
+```typescript
+import {
+  MINIMUM_DEPOSIT_AMOUNT,
+  CORE_DEPOSIT_WALLET_ADDRESS,
+  ARRIVAL_DETECTION_TIMEOUT_MS,
+  L1_CONFIRMATION_TIMEOUT_MS,
+} from '@siphoyawe/mina-sdk';
+```
+
+<Warning>
+The minimum deposit amount is **5 USDC**. Deposits below this amount will fail.
+</Warning>
+
+## Complete Auto-Deposit Flow Example
+
+```typescript
+import { Mina } from '@siphoyawe/mina-sdk';
+
+const mina = new Mina({
+  integrator: 'my-app',
+  autoDeposit: true,
+});
+
+async function bridgeAndDeposit(signer, params) {
+  const fromAddress = await signer.getAddress();
+
+  // 1. Get quote (includes auto-deposit info)
+  const quote = await mina.getQuote({
+    fromChainId: params.fromChainId,
+    toChainId: 999,
+    fromToken: params.fromToken,
+    toToken: '0xb88339cb7199b77e23db6e890353e22632ba630f',
+    fromAmount: params.amount,
+    fromAddress,
+  });
+
+  // Quote indicates if auto-deposit is included
+  console.log(`Auto-deposit included: ${quote.includesAutoDeposit}`);
+
+  // 2. Execute bridge (auto-deposit happens automatically)
+  const result = await mina.execute({
+    quote,
+    signer,
+    onStatusChange: (status) => {
+      // Status includes deposit progress when auto-deposit is enabled
+      console.log(`${status.substatus} - ${status.progress}%`);
+    },
+  });
+
+  // 3. Result includes deposit transaction
+  if (result.status === 'completed') {
+    console.log('Bridge complete!');
+    console.log(`Bridge tx: ${result.txHash}`);
+
+    if (result.depositTxHash) {
+      console.log(`Deposit tx: ${result.depositTxHash}`);
+      console.log('USDC is now in your Hyperliquid trading account');
+    }
+  }
+
+  return result;
+}
+```
+
+## Manual Deposit Flow
+
+If auto-deposit is disabled, you can manually handle deposits:
+
+```typescript
+import {
+  Mina,
+  detectUsdcArrival,
+  executeDeposit,
+  waitForL1Confirmation,
+} from '@siphoyawe/mina-sdk';
+
+const mina = new Mina({
+  integrator: 'my-app',
+  autoDeposit: false, // Disable auto-deposit
+});
+
+async function manualBridgeAndDeposit(signer, params) {
+  const fromAddress = await signer.getAddress();
+
+  // 1. Execute bridge (USDC will arrive on HyperEVM)
+  const quote = await mina.getQuote({ ...params, fromAddress });
+
+  // Quote indicates manual deposit is required
+  console.log(`Manual deposit required: ${quote.manualDepositRequired}`);
+
+  const bridgeResult = await mina.execute({ quote, signer });
+
+  // 2. Detect USDC arrival on HyperEVM
+  console.log('Waiting for USDC to arrive on HyperEVM...');
+  const arrival = await detectUsdcArrival(fromAddress, {
+    expectedAmount: quote.toAmount,
+    onPoll: (attempt) => console.log(`Checking... (attempt ${attempt})`),
+  });
+
+  console.log(`USDC arrived: ${arrival.amountFormatted}`);
+
+  // 3. Execute deposit to L1
+  console.log('Depositing to Hyperliquid L1...');
+  const depositResult = await executeDeposit(signer, {
+    amount: arrival.amount,
+    walletAddress: fromAddress,
+    onStatusChange: (status) => console.log(`Deposit: ${status}`),
+  });
+
+  // 4. Wait for L1 confirmation
+  console.log('Waiting for L1 confirmation...');
+  const confirmation = await waitForL1Confirmation(
+    fromAddress,
+    arrival.amount,
+    depositResult.depositTxHash
+  );
+
+  console.log(`Confirmed! Balance: ${confirmation.finalBalanceFormatted} USDC`);
+
+  return {
+    bridgeTxHash: bridgeResult.txHash,
+    depositTxHash: depositResult.depositTxHash,
+    finalBalance: confirmation.finalBalance,
+  };
+}
+```
+
+## Error Handling
+
+```typescript
+import {
+  UsdcArrivalTimeoutError,
+  MinimumDepositError,
+  InsufficientGasError,
+  DepositTransactionError,
+  L1MonitorCancelledError,
+} from '@siphoyawe/mina-sdk';
+
+try {
+  const result = await executeDeposit(signer, options);
+} catch (error) {
+  if (error instanceof MinimumDepositError) {
+    console.error(`Minimum deposit is ${error.minimumAmount} USDC`);
+  } else if (error instanceof InsufficientGasError) {
+    console.error('Not enough HYPE for gas fees');
+  } else if (error instanceof DepositTransactionError) {
+    console.error(`Deposit failed: ${error.reason}`);
+  } else if (error instanceof UsdcArrivalTimeoutError) {
+    console.error('USDC arrival not detected within timeout');
+  } else if (error instanceof L1MonitorCancelledError) {
+    console.error('L1 monitoring was cancelled or timed out');
+  }
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Slippage" icon="sliders" href="/concepts/slippage">
+    Configure slippage settings
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration">
+    Full configuration options
+  </Card>
+</CardGroup>

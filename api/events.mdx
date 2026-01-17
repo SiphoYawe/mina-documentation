@@ -1,0 +1,334 @@
+---
+title: "Event System"
+description: "SDK event emitter and event types for real-time updates"
+---
+
+# Event System
+
+The Mina SDK provides a typed event system for subscribing to execution updates and status changes.
+
+## SDKEventEmitter
+
+The event emitter class with typed event subscriptions.
+
+```typescript
+class SDKEventEmitter {
+  /** Subscribe to an event */
+  on<K extends SDKEventName>(
+    event: K,
+    callback: EventCallback<SDKEventPayloads[K]>
+  ): void;
+
+  /** Unsubscribe from an event */
+  off<K extends SDKEventName>(
+    event: K,
+    callback: EventCallback<SDKEventPayloads[K]>
+  ): void;
+
+  /** Subscribe to an event once (auto-unsubscribes after first call) */
+  once<K extends SDKEventName>(
+    event: K,
+    callback: EventCallback<SDKEventPayloads[K]>
+  ): void;
+
+  /** Remove all listeners for an event (or all events) */
+  removeAllListeners(event?: SDKEventName): void;
+
+  /** Get listener count for an event */
+  listenerCount(event: SDKEventName): number;
+}
+```
+
+### Methods
+
+| Method | Description |
+|--------|-------------|
+| `on(event, callback)` | Subscribe to an event. Callback fires every time event is emitted. |
+| `off(event, callback)` | Unsubscribe a specific callback from an event. |
+| `once(event, callback)` | Subscribe to an event for one-time notification. |
+| `removeAllListeners(event?)` | Remove all listeners for an event, or all events if no event specified. |
+| `listenerCount(event)` | Returns the number of listeners for an event. |
+
+---
+
+## SDK_EVENTS
+
+Constant object containing all available event names.
+
+```typescript
+const SDK_EVENTS = {
+  /** Emitted when a quote is updated/refreshed */
+  QUOTE_UPDATED: 'quoteUpdated',
+  /** Emitted when execution starts */
+  EXECUTION_STARTED: 'executionStarted',
+  /** Emitted when current step changes */
+  STEP_CHANGED: 'stepChanged',
+  /** Emitted when token approval is required */
+  APPROVAL_REQUIRED: 'approvalRequired',
+  /** Emitted when a transaction is sent */
+  TRANSACTION_SENT: 'transactionSent',
+  /** Emitted when a transaction is confirmed */
+  TRANSACTION_CONFIRMED: 'transactionConfirmed',
+  /** Emitted when deposit to Hyperliquid L1 starts */
+  DEPOSIT_STARTED: 'depositStarted',
+  /** Emitted when deposit to Hyperliquid L1 completes */
+  DEPOSIT_COMPLETED: 'depositCompleted',
+  /** Emitted when full execution completes */
+  EXECUTION_COMPLETED: 'executionCompleted',
+  /** Emitted when execution fails */
+  EXECUTION_FAILED: 'executionFailed',
+  /** Emitted when overall status changes */
+  STATUS_CHANGED: 'statusChanged',
+} as const;
+```
+
+### Event Names
+
+| Event | Description |
+|-------|-------------|
+| `QUOTE_UPDATED` | A quote has been refreshed or updated |
+| `EXECUTION_STARTED` | Bridge execution has begun |
+| `STEP_CHANGED` | Current execution step has changed |
+| `APPROVAL_REQUIRED` | Token approval is needed before proceeding |
+| `TRANSACTION_SENT` | A transaction has been submitted to the network |
+| `TRANSACTION_CONFIRMED` | A transaction has been confirmed on-chain |
+| `DEPOSIT_STARTED` | L1 deposit to Hyperliquid has started |
+| `DEPOSIT_COMPLETED` | L1 deposit to Hyperliquid is complete |
+| `EXECUTION_COMPLETED` | Full bridge execution completed successfully |
+| `EXECUTION_FAILED` | Execution failed at some step |
+| `STATUS_CHANGED` | Overall transaction status has changed |
+
+---
+
+## SDKEventPayloads
+
+Type mapping for event payloads.
+
+```typescript
+interface SDKEventPayloads {
+  [SDK_EVENTS.QUOTE_UPDATED]: {
+    quoteId: string;
+    timestamp: number;
+  };
+
+  [SDK_EVENTS.EXECUTION_STARTED]: {
+    executionId: string;
+    quoteId: string;
+    timestamp: number;
+  };
+
+  [SDK_EVENTS.STEP_CHANGED]: StepStatusPayload;
+
+  [SDK_EVENTS.APPROVAL_REQUIRED]: {
+    tokenAddress: string;
+    amount: string;
+    spender: string;
+  };
+
+  [SDK_EVENTS.TRANSACTION_SENT]: {
+    txHash: string;
+    chainId: number;
+    stepType: StepType;
+  };
+
+  [SDK_EVENTS.TRANSACTION_CONFIRMED]: {
+    txHash: string;
+    chainId: number;
+    stepType: StepType;
+  };
+
+  [SDK_EVENTS.DEPOSIT_STARTED]: {
+    amount: string;
+    walletAddress: string;
+  };
+
+  [SDK_EVENTS.DEPOSIT_COMPLETED]: {
+    txHash: string;
+    amount: string;
+  };
+
+  [SDK_EVENTS.EXECUTION_COMPLETED]: {
+    executionId: string;
+    txHash: string;
+    receivedAmount: string | null;
+  };
+
+  [SDK_EVENTS.EXECUTION_FAILED]: {
+    executionId: string;
+    error: Error;
+    step: string | null;
+  };
+
+  [SDK_EVENTS.STATUS_CHANGED]: TransactionStatusPayload;
+}
+```
+
+---
+
+## Event Payload Details
+
+### QUOTE_UPDATED
+
+```typescript
+{
+  quoteId: string;    // Unique identifier of the updated quote
+  timestamp: number;  // Unix timestamp when quote was updated
+}
+```
+
+### EXECUTION_STARTED
+
+```typescript
+{
+  executionId: string;  // Unique execution tracking ID
+  quoteId: string;      // Quote being executed
+  timestamp: number;    // Unix timestamp when execution started
+}
+```
+
+### APPROVAL_REQUIRED
+
+```typescript
+{
+  tokenAddress: string;  // Token that needs approval
+  amount: string;        // Amount to approve (in smallest unit)
+  spender: string;       // Contract address to approve
+}
+```
+
+### TRANSACTION_SENT
+
+```typescript
+{
+  txHash: string;     // Transaction hash
+  chainId: number;    // Chain where transaction was sent
+  stepType: StepType; // Type of step (approval, swap, bridge, deposit)
+}
+```
+
+### DEPOSIT_COMPLETED
+
+```typescript
+{
+  txHash: string;  // Deposit transaction hash
+  amount: string;  // Amount deposited to L1
+}
+```
+
+### EXECUTION_COMPLETED
+
+```typescript
+{
+  executionId: string;         // Execution tracking ID
+  txHash: string;              // Final transaction hash
+  receivedAmount: string|null; // Amount received (may be null if unknown)
+}
+```
+
+### EXECUTION_FAILED
+
+```typescript
+{
+  executionId: string;   // Execution tracking ID
+  error: Error;          // Error that caused failure
+  step: string | null;   // Step where failure occurred (null if unknown)
+}
+```
+
+---
+
+## Usage Examples
+
+### Basic Event Subscription
+
+```typescript
+import { SDK_EVENTS } from '@mina-bridge/sdk';
+
+// Subscribe to execution completed
+mina.events.on(SDK_EVENTS.EXECUTION_COMPLETED, (payload) => {
+  console.log('Bridge completed!');
+  console.log('Execution ID:', payload.executionId);
+  console.log('Transaction:', payload.txHash);
+  console.log('Received:', payload.receivedAmount);
+});
+
+// Subscribe to failures
+mina.events.on(SDK_EVENTS.EXECUTION_FAILED, (payload) => {
+  console.error('Bridge failed at step:', payload.step);
+  console.error('Error:', payload.error.message);
+});
+```
+
+### Tracking Transaction Progress
+
+```typescript
+mina.events.on(SDK_EVENTS.TRANSACTION_SENT, ({ txHash, chainId, stepType }) => {
+  console.log(`${stepType} transaction sent on chain ${chainId}`);
+  console.log(`View on explorer: https://etherscan.io/tx/${txHash}`);
+});
+
+mina.events.on(SDK_EVENTS.TRANSACTION_CONFIRMED, ({ txHash, stepType }) => {
+  console.log(`${stepType} confirmed: ${txHash}`);
+});
+```
+
+### One-Time Subscription
+
+```typescript
+// Only listen for the first completion
+mina.events.once(SDK_EVENTS.EXECUTION_COMPLETED, (payload) => {
+  showSuccessNotification(payload.txHash);
+});
+```
+
+### Unsubscribing
+
+```typescript
+const handleStatus = (payload) => {
+  updateProgressBar(payload.progress);
+};
+
+// Subscribe
+mina.events.on(SDK_EVENTS.STATUS_CHANGED, handleStatus);
+
+// Later, unsubscribe
+mina.events.off(SDK_EVENTS.STATUS_CHANGED, handleStatus);
+```
+
+### Cleanup All Listeners
+
+```typescript
+// Remove all listeners for a specific event
+mina.events.removeAllListeners(SDK_EVENTS.STATUS_CHANGED);
+
+// Remove ALL listeners (useful for cleanup)
+mina.events.removeAllListeners();
+```
+
+### React Hook Example
+
+```typescript
+import { useEffect } from 'react';
+import { SDK_EVENTS } from '@mina-bridge/sdk';
+
+function useBridgeEvents(mina: Mina) {
+  useEffect(() => {
+    const handleComplete = (payload) => {
+      // Handle completion
+    };
+
+    const handleFailed = (payload) => {
+      // Handle failure
+    };
+
+    mina.events.on(SDK_EVENTS.EXECUTION_COMPLETED, handleComplete);
+    mina.events.on(SDK_EVENTS.EXECUTION_FAILED, handleFailed);
+
+    // Cleanup on unmount
+    return () => {
+      mina.events.off(SDK_EVENTS.EXECUTION_COMPLETED, handleComplete);
+      mina.events.off(SDK_EVENTS.EXECUTION_FAILED, handleFailed);
+    };
+  }, [mina]);
+}
+```

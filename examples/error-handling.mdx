@@ -1,0 +1,786 @@
+---
+title: "Error Handling"
+description: "Implement robust error handling patterns with the Mina SDK"
+---
+
+# Error Handling
+
+This example demonstrates how to handle errors gracefully using the SDK's typed error system, display user-friendly messages, and implement recovery actions.
+
+## Overview
+
+The Mina SDK provides:
+
+- Typed error classes for each error scenario
+- Type guard functions for error identification
+- User-friendly messages and recovery suggestions
+- Retry logic for recoverable errors
+
+## Error Types
+
+The SDK defines specific error classes for different failure scenarios:
+
+| Error Class | Code | Recoverable | Description |
+|-------------|------|-------------|-------------|
+| `InsufficientBalanceError` | `INSUFFICIENT_BALANCE` | No | User lacks required token balance |
+| `NoRouteFoundError` | `NO_ROUTE_FOUND` | No | No valid bridge route exists |
+| `SlippageExceededError` | `SLIPPAGE_EXCEEDED` | Yes | Price moved beyond tolerance |
+| `InvalidSlippageError` | `INVALID_SLIPPAGE` | No | Slippage value out of range |
+| `TransactionFailedError` | `TRANSACTION_FAILED` | Yes | On-chain transaction reverted |
+| `UserRejectedError` | `USER_REJECTED` | No | User rejected wallet prompt |
+| `NetworkError` | `NETWORK_ERROR` | Yes | Network/RPC communication failed |
+| `DepositFailedError` | `DEPOSIT_FAILED` | Yes | L1 deposit step failed |
+| `QuoteExpiredError` | `QUOTE_EXPIRED` | Yes | Quote validity period ended |
+| `MaxRetriesExceededError` | `MAX_RETRIES_EXCEEDED` | No | Retry limit reached |
+
+## Using Type Guards
+
+<CodeGroup>
+```typescript Type Guards
+import {
+  isMinaError,
+  isInsufficientBalanceError,
+  isNoRouteFoundError,
+  isSlippageExceededError,
+  isTransactionFailedError,
+  isUserRejectedError,
+  isNetworkError,
+  isDepositFailedError,
+  isQuoteExpiredError,
+  isRecoverableError,
+} from '@siphoyawe/mina-sdk';
+
+async function handleBridgeError(error: unknown) {
+  // Check if it's a Mina SDK error
+  if (!isMinaError(error)) {
+    console.error('Unexpected error:', error);
+    return { message: 'An unexpected error occurred', canRetry: false };
+  }
+
+  // Handle specific error types
+  if (isInsufficientBalanceError(error)) {
+    return {
+      message: `Insufficient ${error.token} balance. You have ${error.available} but need ${error.required}.`,
+      canRetry: false,
+      action: 'add_funds',
+    };
+  }
+
+  if (isNoRouteFoundError(error)) {
+    return {
+      message: 'No bridge route available. Try a different token or amount.',
+      canRetry: false,
+      action: 'try_different_amount',
+    };
+  }
+
+  if (isSlippageExceededError(error)) {
+    return {
+      message: `Price moved ${(error.slippageTolerance * 100).toFixed(1)}% beyond your slippage tolerance.`,
+      canRetry: true,
+      action: 'increase_slippage',
+    };
+  }
+
+  if (isUserRejectedError(error)) {
+    return {
+      message: 'Transaction was rejected in your wallet.',
+      canRetry: false,
+      action: 'try_again',
+    };
+  }
+
+  if (isNetworkError(error)) {
+    return {
+      message: 'Network connection issue. Please check your connection.',
+      canRetry: true,
+      action: 'retry',
+    };
+  }
+
+  if (isQuoteExpiredError(error)) {
+    return {
+      message: 'Quote has expired. Please get a new quote.',
+      canRetry: true,
+      action: 'fetch_new_quote',
+    };
+  }
+
+  if (isDepositFailedError(error)) {
+    return {
+      message: 'Deposit to Hyperliquid failed. Your funds are safe on HyperEVM.',
+      canRetry: true,
+      action: 'retry',
+      details: {
+        bridgeTxHash: error.bridgeTxHash,
+        amount: error.amount,
+      },
+    };
+  }
+
+  if (isTransactionFailedError(error)) {
+    return {
+      message: error.reason || 'Transaction failed on-chain.',
+      canRetry: true,
+      action: 'retry',
+      details: {
+        txHash: error.txHash,
+        chainId: error.chainId,
+      },
+    };
+  }
+
+  // Default for other MinaErrors
+  return {
+    message: error.userMessage,
+    canRetry: error.recoverable,
+    action: error.recoveryAction,
+  };
+}
+```
+
+```typescript Error Properties
+import type { MinaError } from '@siphoyawe/mina-sdk';
+
+// All MinaError instances have these properties:
+interface MinaErrorInfo {
+  code: string;           // Unique error code (e.g., 'INSUFFICIENT_BALANCE')
+  message: string;        // Technical error message
+  userMessage: string;    // User-friendly message for display
+  recoverable: boolean;   // Whether retry might succeed
+  recoveryAction: string; // Suggested action ('retry', 'add_funds', etc.)
+  step?: string;          // Which step failed ('approval', 'bridge', etc.)
+  details?: object;       // Additional context for debugging
+}
+
+// Access error properties directly
+function logError(error: MinaError) {
+  console.log('Code:', error.code);
+  console.log('Message:', error.message);
+  console.log('User Message:', error.userMessage);
+  console.log('Recoverable:', error.recoverable);
+  console.log('Recovery Action:', error.recoveryAction);
+  console.log('Failed Step:', error.step);
+  console.log('Details:', error.details);
+}
+```
+</CodeGroup>
+
+## React Error Handler Component
+
+<CodeGroup>
+```tsx ErrorDisplay.tsx
+import { useMemo } from 'react';
+import {
+  isMinaError,
+  isInsufficientBalanceError,
+  isNoRouteFoundError,
+  isSlippageExceededError,
+  isQuoteExpiredError,
+  isUserRejectedError,
+  isNetworkError,
+  isDepositFailedError,
+  type RecoveryAction,
+} from '@siphoyawe/mina-sdk';
+
+interface ErrorDisplayProps {
+  error: unknown;
+  onRetry?: () => void;
+  onGetNewQuote?: () => void;
+  onIncreaseSlippage?: () => void;
+  onDismiss?: () => void;
+}
+
+export function ErrorDisplay({
+  error,
+  onRetry,
+  onGetNewQuote,
+  onIncreaseSlippage,
+  onDismiss,
+}: ErrorDisplayProps) {
+  const errorInfo = useMemo(() => parseError(error), [error]);
+
+  if (!errorInfo) return null;
+
+  return (
+    <div className={`error-display ${errorInfo.severity}`}>
+      <div className="error-icon">
+        {errorInfo.severity === 'warning' ? <WarningIcon /> : <ErrorIcon />}
+      </div>
+
+      <div className="error-content">
+        <h4 className="error-title">{errorInfo.title}</h4>
+        <p className="error-message">{errorInfo.message}</p>
+
+        {errorInfo.details && (
+          <details className="error-details">
+            <summary>Technical Details</summary>
+            <pre>{JSON.stringify(errorInfo.details, null, 2)}</pre>
+          </details>
+        )}
+      </div>
+
+      <div className="error-actions">
+        {errorInfo.action === 'retry' && onRetry && (
+          <button onClick={onRetry} className="action-button primary">
+            Try Again
+          </button>
+        )}
+
+        {errorInfo.action === 'fetch_new_quote' && onGetNewQuote && (
+          <button onClick={onGetNewQuote} className="action-button primary">
+            Get New Quote
+          </button>
+        )}
+
+        {errorInfo.action === 'increase_slippage' && onIncreaseSlippage && (
+          <button onClick={onIncreaseSlippage} className="action-button primary">
+            Increase Slippage
+          </button>
+        )}
+
+        {onDismiss && (
+          <button onClick={onDismiss} className="action-button secondary">
+            Dismiss
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+interface ParsedError {
+  title: string;
+  message: string;
+  severity: 'error' | 'warning';
+  action?: RecoveryAction;
+  details?: Record<string, unknown>;
+}
+
+function parseError(error: unknown): ParsedError | null {
+  if (!error) return null;
+
+  if (!isMinaError(error)) {
+    return {
+      title: 'Unexpected Error',
+      message: error instanceof Error ? error.message : 'An unknown error occurred',
+      severity: 'error',
+    };
+  }
+
+  // Handle each specific error type
+  if (isInsufficientBalanceError(error)) {
+    return {
+      title: 'Insufficient Balance',
+      message: `You need ${error.required} ${error.token} but only have ${error.available}.`,
+      severity: 'error',
+      action: 'add_funds',
+      details: {
+        required: error.required,
+        available: error.available,
+        token: error.token,
+      },
+    };
+  }
+
+  if (isNoRouteFoundError(error)) {
+    return {
+      title: 'No Route Available',
+      message: 'No bridge route found for this token pair. Try a different amount or token.',
+      severity: 'warning',
+      action: 'try_different_amount',
+      details: {
+        fromChainId: error.fromChainId,
+        toChainId: error.toChainId,
+        fromToken: error.fromToken,
+        toToken: error.toToken,
+      },
+    };
+  }
+
+  if (isSlippageExceededError(error)) {
+    return {
+      title: 'Price Changed',
+      message: `The price moved beyond your ${(error.slippageTolerance * 100).toFixed(1)}% slippage tolerance. Increase slippage or try again.`,
+      severity: 'warning',
+      action: 'increase_slippage',
+      details: {
+        expected: error.expectedAmount,
+        actual: error.actualAmount,
+        slippage: error.slippageTolerance,
+      },
+    };
+  }
+
+  if (isQuoteExpiredError(error)) {
+    return {
+      title: 'Quote Expired',
+      message: 'Your quote has expired. Please get a fresh quote to continue.',
+      severity: 'warning',
+      action: 'fetch_new_quote',
+      details: {
+        quoteId: error.quoteId,
+        expiredAt: new Date(error.expiredAt).toISOString(),
+      },
+    };
+  }
+
+  if (isUserRejectedError(error)) {
+    return {
+      title: 'Transaction Rejected',
+      message: 'You rejected the transaction in your wallet.',
+      severity: 'warning',
+      action: 'try_again',
+    };
+  }
+
+  if (isNetworkError(error)) {
+    return {
+      title: 'Network Error',
+      message: 'Connection issue. Please check your network and try again.',
+      severity: 'warning',
+      action: 'retry',
+      details: {
+        endpoint: error.endpoint,
+        statusCode: error.statusCode,
+      },
+    };
+  }
+
+  if (isDepositFailedError(error)) {
+    return {
+      title: 'Deposit Failed',
+      message: 'The deposit to Hyperliquid L1 failed. Your funds are safe on HyperEVM and you can retry.',
+      severity: 'warning',
+      action: 'retry',
+      details: {
+        bridgeTxHash: error.bridgeTxHash,
+        depositTxHash: error.depositTxHash,
+        amount: error.amount,
+      },
+    };
+  }
+
+  // Default handler for other MinaErrors
+  return {
+    title: 'Error',
+    message: error.userMessage,
+    severity: error.recoverable ? 'warning' : 'error',
+    action: error.recoveryAction as RecoveryAction,
+  };
+}
+
+// Icon components
+function ErrorIcon() {
+  return (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="#ef4444">
+      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" />
+    </svg>
+  );
+}
+
+function WarningIcon() {
+  return (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="#eab308">
+      <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z" />
+    </svg>
+  );
+}
+```
+
+```css ErrorDisplay.css
+.error-display {
+  display: flex;
+  gap: 16px;
+  padding: 16px;
+  border-radius: 12px;
+  margin-bottom: 16px;
+}
+
+.error-display.error {
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.error-display.warning {
+  background: rgba(234, 179, 8, 0.1);
+  border: 1px solid rgba(234, 179, 8, 0.3);
+}
+
+.error-icon {
+  flex-shrink: 0;
+}
+
+.error-content {
+  flex: 1;
+}
+
+.error-title {
+  margin: 0 0 4px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.error-message {
+  margin: 0;
+  font-size: 13px;
+  color: #888;
+  line-height: 1.4;
+}
+
+.error-details {
+  margin-top: 12px;
+  font-size: 12px;
+}
+
+.error-details summary {
+  cursor: pointer;
+  color: #888;
+}
+
+.error-details pre {
+  margin-top: 8px;
+  padding: 12px;
+  background: #0d0d1a;
+  border-radius: 8px;
+  overflow-x: auto;
+  font-size: 11px;
+  color: #7dd3fc;
+}
+
+.error-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.action-button {
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.action-button.primary {
+  background: #7dd3fc;
+  border: none;
+  color: #0d0d1a;
+}
+
+.action-button.secondary {
+  background: transparent;
+  border: 1px solid #2d2d44;
+  color: #888;
+}
+
+.action-button:hover {
+  opacity: 0.9;
+}
+```
+</CodeGroup>
+
+## Try-Catch Patterns
+
+### Quote Fetching with Error Handling
+
+```typescript
+import { Mina, isNoRouteFoundError, isNetworkError } from '@siphoyawe/mina-sdk';
+
+async function getQuoteWithRetry(
+  mina: Mina,
+  params: Parameters<typeof mina.getQuote>[0],
+  maxRetries = 3
+) {
+  let lastError: Error | null = null;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const quote = await mina.getQuote(params);
+      return { quote, error: null };
+    } catch (error) {
+      lastError = error as Error;
+
+      // Don't retry non-recoverable errors
+      if (isNoRouteFoundError(error)) {
+        return {
+          quote: null,
+          error: {
+            type: 'NO_ROUTE',
+            message: 'No bridge route available for this path',
+            canRetry: false,
+          },
+        };
+      }
+
+      // Retry network errors
+      if (isNetworkError(error) && attempt < maxRetries) {
+        console.log(`Attempt ${attempt} failed, retrying...`);
+        await delay(1000 * attempt); // Exponential backoff
+        continue;
+      }
+
+      // Rethrow other errors
+      throw error;
+    }
+  }
+
+  return {
+    quote: null,
+    error: {
+      type: 'MAX_RETRIES',
+      message: lastError?.message ?? 'Failed after multiple attempts',
+      canRetry: false,
+    },
+  };
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+```
+
+### Execution with Comprehensive Error Handling
+
+```typescript
+import {
+  Mina,
+  isUserRejectedError,
+  isSlippageExceededError,
+  isQuoteExpiredError,
+  isTransactionFailedError,
+  isDepositFailedError,
+  isRecoverableError,
+} from '@siphoyawe/mina-sdk';
+import type { Quote, ExecuteOptions, ExecutionResult } from '@siphoyawe/mina-sdk';
+
+interface ExecutionOutcome {
+  success: boolean;
+  result?: ExecutionResult;
+  error?: {
+    code: string;
+    message: string;
+    userMessage: string;
+    recoverable: boolean;
+    suggestedAction: string;
+  };
+}
+
+async function executeWithErrorHandling(
+  mina: Mina,
+  quote: Quote,
+  signer: ExecuteOptions['signer'],
+  onProgress?: (message: string) => void
+): Promise<ExecutionOutcome> {
+  try {
+    // Validate quote before execution
+    mina.validateQuote(quote);
+
+    const result = await mina.execute({
+      quote,
+      signer,
+      onStepChange: (step) => {
+        const stepLabels: Record<string, string> = {
+          approval: 'Approving token...',
+          swap: 'Swapping tokens...',
+          bridge: 'Bridging to HyperEVM...',
+          deposit: 'Depositing to L1...',
+        };
+        onProgress?.(stepLabels[step.step] ?? step.step);
+      },
+    });
+
+    if (result.status === 'completed') {
+      return { success: true, result };
+    }
+
+    // Execution completed but with failure status
+    return {
+      success: false,
+      result,
+      error: {
+        code: 'EXECUTION_FAILED',
+        message: result.error?.message ?? 'Execution failed',
+        userMessage: 'The bridge transaction failed. Please try again.',
+        recoverable: true,
+        suggestedAction: 'retry',
+      },
+    };
+  } catch (error) {
+    // Handle user rejection
+    if (isUserRejectedError(error)) {
+      return {
+        success: false,
+        error: {
+          code: 'USER_REJECTED',
+          message: 'Transaction rejected by user',
+          userMessage: 'You cancelled the transaction.',
+          recoverable: false,
+          suggestedAction: 'try_again',
+        },
+      };
+    }
+
+    // Handle slippage exceeded
+    if (isSlippageExceededError(error)) {
+      return {
+        success: false,
+        error: {
+          code: 'SLIPPAGE_EXCEEDED',
+          message: error.message,
+          userMessage: `Price changed beyond your ${(error.slippageTolerance * 100).toFixed(1)}% tolerance.`,
+          recoverable: true,
+          suggestedAction: 'increase_slippage',
+        },
+      };
+    }
+
+    // Handle quote expired
+    if (isQuoteExpiredError(error)) {
+      return {
+        success: false,
+        error: {
+          code: 'QUOTE_EXPIRED',
+          message: 'Quote has expired',
+          userMessage: 'Your quote expired. Please get a new one.',
+          recoverable: true,
+          suggestedAction: 'fetch_new_quote',
+        },
+      };
+    }
+
+    // Handle transaction failure
+    if (isTransactionFailedError(error)) {
+      return {
+        success: false,
+        error: {
+          code: 'TRANSACTION_FAILED',
+          message: error.reason ?? error.message,
+          userMessage: error.reason ?? 'The transaction failed on-chain.',
+          recoverable: true,
+          suggestedAction: 'retry',
+        },
+      };
+    }
+
+    // Handle deposit failure
+    if (isDepositFailedError(error)) {
+      return {
+        success: false,
+        error: {
+          code: 'DEPOSIT_FAILED',
+          message: error.message,
+          userMessage: 'Bridge succeeded but deposit failed. Your funds are safe on HyperEVM.',
+          recoverable: true,
+          suggestedAction: 'retry',
+        },
+      };
+    }
+
+    // Generic error handling
+    const isRecoverable = isRecoverableError(error);
+    return {
+      success: false,
+      error: {
+        code: 'UNKNOWN_ERROR',
+        message: error instanceof Error ? error.message : 'Unknown error',
+        userMessage: 'An unexpected error occurred. Please try again.',
+        recoverable: isRecoverable,
+        suggestedAction: isRecoverable ? 'retry' : 'contact_support',
+      },
+    };
+  }
+}
+```
+
+## Retry Logic with Exponential Backoff
+
+```typescript
+import { Mina, isRecoverableError, MAX_RETRIES } from '@siphoyawe/mina-sdk';
+import type { ExecuteOptions, ExecutionResult } from '@siphoyawe/mina-sdk';
+
+interface RetryConfig {
+  maxAttempts?: number;
+  baseDelay?: number;
+  maxDelay?: number;
+}
+
+async function executeWithRetry(
+  mina: Mina,
+  options: ExecuteOptions,
+  config: RetryConfig = {}
+): Promise<ExecutionResult> {
+  const {
+    maxAttempts = MAX_RETRIES,
+    baseDelay = 1000,
+    maxDelay = 10000,
+  } = config;
+
+  let lastError: Error | null = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const result = await mina.execute(options);
+
+      if (result.status === 'completed') {
+        return result;
+      }
+
+      // Check if we should retry based on the error
+      if (result.error && isRecoverableError(result.error)) {
+        lastError = result.error;
+
+        if (attempt < maxAttempts) {
+          const delay = Math.min(baseDelay * Math.pow(2, attempt - 1), maxDelay);
+          console.log(`Attempt ${attempt} failed. Retrying in ${delay}ms...`);
+          await new Promise((r) => setTimeout(r, delay));
+          continue;
+        }
+      }
+
+      return result;
+    } catch (error) {
+      lastError = error as Error;
+
+      // Only retry recoverable errors
+      if (!isRecoverableError(error)) {
+        throw error;
+      }
+
+      if (attempt < maxAttempts) {
+        const delay = Math.min(baseDelay * Math.pow(2, attempt - 1), maxDelay);
+        console.log(`Attempt ${attempt} failed. Retrying in ${delay}ms...`);
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
+  }
+
+  throw lastError ?? new Error('Max retry attempts exceeded');
+}
+```
+
+## Best Practices
+
+<Note>
+When handling errors in production:
+
+1. Always use type guards to identify specific error types
+2. Show user-friendly messages, not technical details
+3. Provide clear recovery actions when possible
+4. Log detailed error information for debugging
+5. Implement retry logic for recoverable errors
+6. Use exponential backoff to avoid overwhelming services
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Event Tracking" icon="bell" href="/examples/event-tracking">
+    Build real-time status updates
+  </Card>
+  <Card title="Full Integration" icon="puzzle-piece" href="/examples/full-integration">
+    Complete bridge widget
+  </Card>
+</CardGroup>

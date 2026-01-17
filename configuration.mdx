@@ -1,0 +1,220 @@
+---
+title: "Configuration"
+description: "Configure the Mina SDK for your application"
+---
+
+# Configuration
+
+The Mina SDK is configured through the `MinaConfig` object passed to the constructor.
+
+## Basic Configuration
+
+```typescript
+import { Mina } from '@siphoyawe/mina-sdk';
+
+const mina = new Mina({
+  integrator: 'my-app'
+});
+```
+
+## Configuration Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `integrator` | `string` | **Required** | Your application identifier for tracking |
+| `autoDeposit` | `boolean` | `true` | Automatically deposit to Hyperliquid L1 |
+| `defaultSlippage` | `number` | `0.005` | Default slippage tolerance (0.5%) |
+| `rpcUrls` | `Record<number, string>` | - | Custom RPC URLs by chain ID |
+
+## Configuration Details
+
+### integrator (Required)
+
+A unique identifier for your application. This is used for analytics and tracking.
+
+```typescript
+const mina = new Mina({
+  integrator: 'my-defi-app'
+});
+```
+
+<Note>
+Choose a descriptive, unique integrator name. This helps with debugging and analytics.
+</Note>
+
+### autoDeposit
+
+Controls whether bridged USDC is automatically deposited to your Hyperliquid L1 trading account.
+
+```typescript
+// Enable auto-deposit (default)
+const mina = new Mina({
+  integrator: 'my-app',
+  autoDeposit: true
+});
+
+// Disable auto-deposit - USDC stays on HyperEVM
+const mina = new Mina({
+  integrator: 'my-app',
+  autoDeposit: false
+});
+```
+
+When `autoDeposit` is enabled, the SDK will:
+1. Detect USDC arrival on HyperEVM
+2. Approve USDC for the deposit contract
+3. Execute the deposit transaction
+4. Wait for L1 confirmation
+
+### defaultSlippage
+
+The default slippage tolerance for quotes. Expressed as a decimal (0.005 = 0.5%).
+
+```typescript
+const mina = new Mina({
+  integrator: 'my-app',
+  defaultSlippage: 0.01  // 1% slippage
+});
+```
+
+**Slippage Constraints:**
+
+| Constraint | Value | Description |
+|------------|-------|-------------|
+| Minimum | 0.0001 | 0.01% |
+| Maximum | 0.05 | 5% |
+| Default | 0.005 | 0.5% |
+| Presets | 0.001, 0.005, 0.01 | 0.1%, 0.5%, 1% |
+
+<Warning>
+Setting slippage too low may cause transactions to fail. Setting it too high may result in unfavorable rates.
+</Warning>
+
+### rpcUrls
+
+Provide custom RPC URLs for specific chains. Useful for private RPCs or when default RPCs are unreliable.
+
+```typescript
+const mina = new Mina({
+  integrator: 'my-app',
+  rpcUrls: {
+    1: 'https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY',      // Ethereum
+    42161: 'https://arb-mainnet.g.alchemy.com/v2/YOUR_KEY',  // Arbitrum
+    10: 'https://opt-mainnet.g.alchemy.com/v2/YOUR_KEY'      // Optimism
+  }
+});
+```
+
+## Complete Configuration Example
+
+```typescript
+import { Mina } from '@siphoyawe/mina-sdk';
+
+const mina = new Mina({
+  // Required: Your app identifier
+  integrator: 'my-trading-app',
+
+  // Auto-deposit to Hyperliquid L1 (default: true)
+  autoDeposit: true,
+
+  // Default slippage tolerance (default: 0.005 = 0.5%)
+  defaultSlippage: 0.005,
+
+  // Custom RPC URLs for better reliability
+  rpcUrls: {
+    1: process.env.ETH_RPC_URL,
+    42161: process.env.ARB_RPC_URL,
+    10: process.env.OP_RPC_URL,
+    8453: process.env.BASE_RPC_URL
+  }
+});
+```
+
+## Per-Request Configuration
+
+Some options can be overridden per request:
+
+### Slippage Override
+
+```typescript
+const quote = await mina.getQuote({
+  fromChain: 42161,
+  toChain: 999,
+  fromToken: '0x...',
+  toToken: '0x...',
+  amount: '1000000',
+  fromAddress: '0x...',
+  slippageTolerance: 0.01  // Override: 1% for this quote
+});
+```
+
+### Route Preference
+
+```typescript
+const quote = await mina.getQuote({
+  fromChain: 42161,
+  toChain: 999,
+  fromToken: '0x...',
+  toToken: '0x...',
+  amount: '1000000',
+  fromAddress: '0x...',
+  routePreference: 'fastest'  // 'recommended' | 'fastest' | 'cheapest'
+});
+```
+
+## Environment-Based Configuration
+
+A common pattern for managing configuration across environments:
+
+```typescript
+import { Mina, MinaConfig } from '@siphoyawe/mina-sdk';
+
+function createMinaConfig(): MinaConfig {
+  const isDev = process.env.NODE_ENV === 'development';
+
+  return {
+    integrator: isDev ? 'my-app-dev' : 'my-app-prod',
+    autoDeposit: true,
+    defaultSlippage: isDev ? 0.01 : 0.005,  // Higher slippage in dev
+    rpcUrls: {
+      1: process.env.ETH_RPC_URL,
+      42161: process.env.ARB_RPC_URL
+    }
+  };
+}
+
+const mina = new Mina(createMinaConfig());
+```
+
+## React Configuration
+
+When using React, pass the configuration to the provider:
+
+```typescript
+import { MinaProvider } from '@siphoyawe/mina-sdk/react';
+
+function App() {
+  return (
+    <MinaProvider
+      config={{
+        integrator: 'my-react-app',
+        autoDeposit: true,
+        defaultSlippage: 0.005
+      }}
+    >
+      <YourApp />
+    </MinaProvider>
+  );
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Chains" icon="link" href="/concepts/chains">
+    Learn about supported chains
+  </Card>
+  <Card title="Slippage" icon="sliders" href="/concepts/slippage">
+    Deep dive into slippage settings
+  </Card>
+</CardGroup>

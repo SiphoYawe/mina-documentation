@@ -1,0 +1,217 @@
+---
+title: "React Installation"
+description: "Set up the Mina SDK for React applications"
+---
+
+# React Installation
+
+The Mina SDK provides first-class React support with hooks and a context provider for seamless integration into your React applications.
+
+## Installation
+
+Install the SDK along with its peer dependencies.
+
+<CodeGroup>
+```bash npm
+npm install @siphoyawe/mina-sdk viem react react-dom
+```
+
+```bash yarn
+yarn add @siphoyawe/mina-sdk viem react react-dom
+```
+
+```bash pnpm
+pnpm add @siphoyawe/mina-sdk viem react react-dom
+```
+
+```bash bun
+bun add @siphoyawe/mina-sdk viem react react-dom
+```
+</CodeGroup>
+
+## Requirements
+
+| Dependency | Version | Purpose |
+|------------|---------|---------|
+| `react` | ^18.0.0 | React library |
+| `react-dom` | ^18.0.0 | React DOM renderer |
+| `viem` | ^2.0.0 | Ethereum interactions |
+
+## Import Path
+
+React-specific exports are available from a dedicated subpath:
+
+```typescript
+// React hooks and provider
+import {
+  MinaProvider,
+  useMina,
+  useQuote,
+  useTokenBalance,
+  useTransactionStatus
+} from '@siphoyawe/mina-sdk/react';
+
+// Core SDK (also available)
+import { Mina, getChains, getTokens } from '@siphoyawe/mina-sdk';
+```
+
+<Note>
+The `/react` subpath includes client-side only code. Always import React hooks from `@siphoyawe/mina-sdk/react`, not from the main entry point.
+</Note>
+
+## Framework Setup
+
+<Tabs>
+  <Tab title="Next.js App Router">
+    The SDK requires client-side rendering. Mark your provider component with `'use client'`:
+
+    ```typescript app/providers.tsx
+    'use client';
+
+    import { MinaProvider } from '@siphoyawe/mina-sdk/react';
+
+    export function Providers({ children }: { children: React.ReactNode }) {
+      return (
+        <MinaProvider config={{ integrator: 'my-app' }}>
+          {children}
+        </MinaProvider>
+      );
+    }
+    ```
+
+    Then use in your root layout:
+
+    ```typescript app/layout.tsx
+    import { Providers } from './providers';
+
+    export default function RootLayout({
+      children
+    }: {
+      children: React.ReactNode
+    }) {
+      return (
+        <html lang="en">
+          <body>
+            <Providers>{children}</Providers>
+          </body>
+        </html>
+      );
+    }
+    ```
+
+    <Warning>
+    The `'use client'` directive is required for any component using Mina hooks. Without it, Next.js will attempt server-side rendering which will fail.
+    </Warning>
+  </Tab>
+  <Tab title="Next.js Pages Router">
+    Wrap your app in `_app.tsx`:
+
+    ```typescript pages/_app.tsx
+    import type { AppProps } from 'next/app';
+    import { MinaProvider } from '@siphoyawe/mina-sdk/react';
+
+    export default function App({ Component, pageProps }: AppProps) {
+      return (
+        <MinaProvider config={{ integrator: 'my-app' }}>
+          <Component {...pageProps} />
+        </MinaProvider>
+      );
+    }
+    ```
+  </Tab>
+  <Tab title="Vite / Create React App">
+    Wrap your app at the entry point:
+
+    ```typescript src/main.tsx
+    import React from 'react';
+    import ReactDOM from 'react-dom/client';
+    import { MinaProvider } from '@siphoyawe/mina-sdk/react';
+    import App from './App';
+
+    ReactDOM.createRoot(document.getElementById('root')!).render(
+      <React.StrictMode>
+        <MinaProvider config={{ integrator: 'my-app' }}>
+          <App />
+        </MinaProvider>
+      </React.StrictMode>
+    );
+    ```
+  </Tab>
+</Tabs>
+
+## TypeScript Configuration
+
+Ensure your `tsconfig.json` supports the SDK:
+
+```json tsconfig.json
+{
+  "compilerOptions": {
+    "moduleResolution": "bundler",
+    "target": "ES2020",
+    "lib": ["ES2020", "DOM"],
+    "jsx": "react-jsx"
+  }
+}
+```
+
+## Verifying Setup
+
+Create a simple component to verify the SDK is working:
+
+```typescript components/SDKStatus.tsx
+'use client';
+
+import { useMina } from '@siphoyawe/mina-sdk/react';
+
+export function SDKStatus() {
+  const { mina, isReady, error } = useMina();
+
+  if (error) {
+    return <div>SDK Error: {error.message}</div>;
+  }
+
+  if (!isReady) {
+    return <div>Initializing SDK...</div>;
+  }
+
+  return <div>SDK Ready</div>;
+}
+```
+
+## Available Exports
+
+The `/react` subpath exports:
+
+| Export | Type | Description |
+|--------|------|-------------|
+| `MinaProvider` | Component | Context provider for SDK instance |
+| `useMina` | Hook | Access SDK instance and status |
+| `useQuote` | Hook | Fetch bridge quotes with debouncing |
+| `useTokenBalance` | Hook | Track token balances with auto-refresh |
+| `useTransactionStatus` | Hook | Poll transaction status |
+
+Additionally, commonly used types are re-exported for convenience:
+
+```typescript
+import type {
+  MinaConfig,
+  Chain,
+  Token,
+  Quote,
+  QuoteParams,
+  Balance,
+  ExecutionResult,
+  TransactionStatus,
+} from '@siphoyawe/mina-sdk/react';
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="MinaProvider" icon="box" href="/react/provider">
+    Configure and set up the provider
+  </Card>
+  <Card title="useMina Hook" icon="hook" href="/react/hooks/use-mina">
+    Access the SDK instance
+  </Card>
+</CardGroup>

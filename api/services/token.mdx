@@ -1,0 +1,430 @@
+---
+title: 'Token Service'
+description: 'Token discovery and management service'
+---
+
+The Token Service provides functions for fetching and caching token information across supported chains. It uses the LI.FI API with built-in caching (30 minute TTL).
+
+## Exports
+
+```typescript
+import {
+  getTokens,
+  getBridgeableTokens,
+  getDestinationTokens,
+  getTokenByAddress,
+  invalidateTokenCache,
+  createTokenCache,
+  TokenCache,
+  NATIVE_TOKEN_ADDRESS,
+  HYPEREVM_USDC,
+  HYPEREVM_HYPE,
+} from '@mina-bridge/sdk/services/token';
+```
+
+---
+
+## Functions
+
+### getTokens(chainId, cache?)
+
+Fetch all available tokens for a specific chain.
+
+```typescript
+async function getTokens(
+  chainId: number,
+  cache?: TokenCache
+): Promise<TokensResponse>
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `chainId` | `number` | Yes | Chain ID to fetch tokens for |
+| `cache` | `TokenCache` | No | Optional cache instance |
+
+**Returns:** `TokensResponse`
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `tokens` | `Token[]` | Array of tokens on the chain |
+| `isStale` | `boolean` | Whether data is from stale cache |
+| `cachedAt` | `number \| null` | Timestamp when data was cached |
+| `chainId` | `number` | Chain ID for these tokens |
+
+**Throws:** `TokenFetchError` if API fails and no cache available.
+
+**Example:**
+
+```typescript
+// Get Ethereum tokens
+const response = await getTokens(1);
+console.log(`Found ${response.tokens.length} tokens on Ethereum`);
+
+// Find specific tokens
+const usdc = response.tokens.find(t => t.symbol === 'USDC');
+const weth = response.tokens.find(t => t.symbol === 'WETH');
+
+console.log(`USDC: ${usdc?.address}`);
+console.log(`WETH: ${weth?.address}`);
+```
+
+---
+
+### getBridgeableTokens(chainId, toChainId?, cache?)
+
+Get tokens that can be bridged from a specific chain to HyperEVM.
+
+```typescript
+async function getBridgeableTokens(
+  chainId: number,
+  toChainId?: number,
+  cache?: TokenCache
+): Promise<Token[]>
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `chainId` | `number` | - | Source chain ID |
+| `toChainId` | `number` | `999` | Destination chain ID (HyperEVM) |
+| `cache` | `TokenCache` | - | Optional cache instance |
+
+**Example:**
+
+```typescript
+// Get bridgeable tokens from Arbitrum
+const tokens = await getBridgeableTokens(42161);
+
+console.log(`${tokens.length} tokens can bridge from Arbitrum to HyperEVM`);
+
+// Common bridgeable tokens
+const stablecoins = tokens.filter(t =>
+  ['USDC', 'USDT', 'DAI'].includes(t.symbol)
+);
+console.log('Stablecoins:', stablecoins.map(t => t.symbol));
+```
+
+---
+
+### getDestinationTokens()
+
+Get tokens available on HyperEVM destination.
+
+```typescript
+function getDestinationTokens(): Token[]
+```
+
+**Returns:** Array containing USDC and HYPE tokens on HyperEVM.
+
+**Example:**
+
+```typescript
+const destTokens = getDestinationTokens();
+
+destTokens.forEach(token => {
+  console.log(`${token.symbol}: ${token.address}`);
+});
+// Output:
+// USDC: 0xb88339cb7199b77e23db6e890353e22632ba630f
+// HYPE: 0x0000000000000000000000000000000000000000
+```
+
+---
+
+### getTokenByAddress(chainId, tokenAddress, cache?)
+
+Get a specific token by its address.
+
+```typescript
+async function getTokenByAddress(
+  chainId: number,
+  tokenAddress: string,
+  cache?: TokenCache
+): Promise<Token | undefined>
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `chainId` | `number` | Yes | Chain ID |
+| `tokenAddress` | `string` | Yes | Token contract address |
+| `cache` | `TokenCache` | No | Optional cache instance |
+
+**Example:**
+
+```typescript
+// Get USDC on Ethereum
+const usdc = await getTokenByAddress(
+  1,
+  '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
+);
+
+if (usdc) {
+  console.log(`Found: ${usdc.name}`);      // "USD Coin"
+  console.log(`Symbol: ${usdc.symbol}`);   // "USDC"
+  console.log(`Decimals: ${usdc.decimals}`); // 6
+  console.log(`Price: $${usdc.priceUsd}`);
+}
+
+// Get native ETH
+import { NATIVE_TOKEN_ADDRESS } from '@mina-bridge/sdk';
+
+const eth = await getTokenByAddress(1, NATIVE_TOKEN_ADDRESS);
+console.log(eth?.symbol); // "ETH"
+```
+
+---
+
+### invalidateTokenCache(chainId?, cache?)
+
+Manually invalidate the token cache.
+
+```typescript
+function invalidateTokenCache(
+  chainId?: number,
+  cache?: TokenCache
+): void
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `chainId` | `number` | Optional chain ID to invalidate (invalidates all if not provided) |
+| `cache` | `TokenCache` | Optional cache instance |
+
+**Example:**
+
+```typescript
+// Invalidate all token caches
+invalidateTokenCache();
+
+// Invalidate only Ethereum tokens
+invalidateTokenCache(1);
+
+// With custom cache
+const myCache = createTokenCache();
+invalidateTokenCache(42161, myCache);
+```
+
+---
+
+### createTokenCache()
+
+Factory function to create a new cache instance.
+
+```typescript
+function createTokenCache(): TokenCache
+```
+
+**Example:**
+
+```typescript
+const cache = createTokenCache();
+
+// Use isolated cache
+const tokens = await getTokens(1, cache);
+```
+
+---
+
+## Types
+
+### TokensResponse
+
+```typescript
+interface TokensResponse {
+  /** Array of token data */
+  tokens: Token[];
+  /** Whether the data is from stale cache */
+  isStale: boolean;
+  /** Timestamp when data was cached (null if fresh from API) */
+  cachedAt: number | null;
+  /** Chain ID for these tokens */
+  chainId: number;
+}
+```
+
+### Token
+
+```typescript
+interface Token {
+  /** Token contract address (or native token address) */
+  address: string;
+  /** Token symbol (e.g., "USDC") */
+  symbol: string;
+  /** Token name (e.g., "USD Coin") */
+  name: string;
+  /** Token decimals (e.g., 6 for USDC) */
+  decimals: number;
+  /** URL to token logo image */
+  logoUrl: string;
+  /** Current USD price (optional) */
+  priceUsd?: number;
+  /** Chain ID this token is on */
+  chainId: number;
+}
+```
+
+### TokenFetchError
+
+```typescript
+class TokenFetchError extends Error {
+  readonly code: 'TOKEN_FETCH_FAILED';
+  readonly chainId: number;
+  readonly recoveryAction: 'retry';
+  readonly cachedAvailable: boolean;
+}
+```
+
+---
+
+## Constants
+
+### NATIVE_TOKEN_ADDRESS
+
+Address used to represent native tokens (ETH, MATIC, etc.).
+
+```typescript
+const NATIVE_TOKEN_ADDRESS = '0x0000000000000000000000000000000000000000';
+```
+
+### HYPEREVM_USDC
+
+Pre-defined USDC token on HyperEVM.
+
+```typescript
+const HYPEREVM_USDC: Token = {
+  address: '0xb88339cb7199b77e23db6e890353e22632ba630f',
+  symbol: 'USDC',
+  name: 'USD Coin',
+  decimals: 6,
+  logoUrl: 'https://static.debank.com/image/coin/logo_url/usdc/e87790bfe0b3f2ea855dc29069b38818.png',
+  chainId: 999,
+};
+```
+
+### HYPEREVM_HYPE
+
+Pre-defined HYPE native token on HyperEVM.
+
+```typescript
+const HYPEREVM_HYPE: Token = {
+  address: '0x0000000000000000000000000000000000000000',
+  symbol: 'HYPE',
+  name: 'HYPE',
+  decimals: 18,
+  logoUrl: 'https://app.hyperliquid.xyz/icons/hyperliquid-logo.svg',
+  chainId: 999,
+};
+```
+
+---
+
+## TokenCache Class
+
+The `TokenCache` class manages caching for token data with a 30-minute TTL.
+
+### Methods
+
+```typescript
+class TokenCache {
+  /** Get cached tokens for a chain if not expired */
+  getTokens(chainId: number): {
+    data: Token[];
+    isStale: boolean;
+    cachedAt: number;
+  } | null;
+
+  /** Store tokens in cache for a chain */
+  setTokens(chainId: number, tokens: Token[]): void;
+
+  /** Get cached bridgeable token addresses for a route */
+  getBridgeableAddresses(
+    fromChainId: number,
+    toChainId: number
+  ): string[] | null;
+
+  /** Store bridgeable token addresses */
+  setBridgeableAddresses(
+    fromChainId: number,
+    toChainId: number,
+    addresses: string[]
+  ): void;
+
+  /** Invalidate cache for a specific chain or all chains */
+  invalidate(chainId?: number): void;
+
+  /** Check if cached tokens exist for a chain (even if expired) */
+  hasCachedTokens(chainId: number): boolean;
+
+  /** Get tokens even if expired (for fallback) */
+  getTokensStale(chainId: number): {
+    data: Token[];
+    cachedAt: number;
+  } | null;
+}
+```
+
+### Example Usage
+
+```typescript
+const cache = createTokenCache();
+
+// First request - fetches from API
+const response1 = await getTokens(1, cache);
+console.log('Token count:', response1.tokens.length);
+
+// Second request - uses cache
+const response2 = await getTokens(1, cache);
+console.log('From cache:', response2.cachedAt !== null);
+
+// Invalidate specific chain
+cache.invalidate(1);
+
+// Invalidate all
+cache.invalidate();
+```
+
+---
+
+## Common Patterns
+
+### Get Popular Tokens
+
+```typescript
+async function getPopularTokens(chainId: number): Promise<Token[]> {
+  const popularSymbols = ['USDC', 'USDT', 'ETH', 'WETH', 'WBTC', 'DAI'];
+  const { tokens } = await getTokens(chainId);
+
+  return tokens.filter(token =>
+    popularSymbols.includes(token.symbol.toUpperCase())
+  );
+}
+```
+
+### Find Token by Symbol
+
+```typescript
+async function findToken(
+  chainId: number,
+  symbol: string
+): Promise<Token | undefined> {
+  const { tokens } = await getTokens(chainId);
+  return tokens.find(t =>
+    t.symbol.toUpperCase() === symbol.toUpperCase()
+  );
+}
+
+// Usage
+const usdc = await findToken(1, 'USDC');
+```
+
+### Get Stablecoins
+
+```typescript
+async function getStablecoins(chainId: number): Promise<Token[]> {
+  const stableSymbols = ['USDC', 'USDT', 'DAI', 'BUSD', 'FRAX'];
+  const { tokens } = await getTokens(chainId);
+
+  return tokens.filter(token =>
+    stableSymbols.includes(token.symbol.toUpperCase())
+  );
+}
+```
